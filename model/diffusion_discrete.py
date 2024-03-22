@@ -609,6 +609,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 neg_over += (rewards[~rewards_mask]<-5).sum().detach().cpu().numpy().item()
                 advantages = torch.clamp(rewards, -5, 5).cuda()
                 advantages[rewards_mask]=0
+                print("the advantages is ", advantages.shape)
                 #accumulation on T steps
                 sample_idx = random.sample(list(range(self.T)),int(self.T*self.cfg.general.ppo_sr))
                 for idx in sample_idx:
