@@ -192,7 +192,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.train_fps = None
         self.train_graphs = None
         self.ckpt = None
-        if cfg.general.train_method in ["ddpo","gdpo","isddpo"]:
+        if cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"]:
             self.automatic_optimization=False
 
     def training_step(self, data, i):
@@ -892,9 +892,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_X = true_X[:, :]
         flat_true_X = torch.argmax(flat_true_X, dim=-1)
         flat_pred_X = masked_pred_X[:, :]
-        loss_X = metric(flat_pred_X,flat_true_X)
+        loss_X = torch.log((flat_pred_X*flat_true_X).sum(-1))
         loss_X = loss_X.reshape(b,-1)
-        ratio_X = torch.exp(-loss_X-logpX)
+        ratio_X = torch.exp(loss_X-logpX)
         unclip_X = -reweight*ratio_X
         clip_X = -reweight*torch.clamp(ratio_X,1.0-1e-4,1.0+1e-4)
         # loss_X = torch.maximum(unclip_X,clip_X)
@@ -906,9 +906,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_E = true_E[:, :]
         flat_true_E = torch.argmax(flat_true_E, dim=-1)
         flat_pred_E = masked_pred_E[:, :]
-        loss_E = metric(flat_pred_E, flat_true_E)
+        loss_E = torch.log((flat_pred_E*flat_true_E).sum(-1))
         loss_E = loss_E.reshape(b,-1)
-        ratio_E = torch.exp(-loss_E-logpE)
+        ratio_E = torch.exp(loss_E-logpE)
         unclip_E = -reweight*ratio_E
         clip_E = -reweight*torch.clamp(ratio_E,1.0-1e-4,1.0+1e-4)
         # loss_E = torch.maximum(unclip_E,clip_E)
@@ -974,15 +974,15 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_X = true_X[:, :]
         flat_true_X = torch.argmax(flat_true_X, dim=-1)
         flat_pred_X = masked_pred_X[:, :]
-        loss_X = metric(flat_pred_X,flat_true_X)
+        loss_X = torch.log((flat_pred_X*flat_true_X).sum(-1))
         loss_X = loss_X.reshape(b,-1)
         flat_true_E = true_E[:, :]
         flat_true_E = torch.argmax(flat_true_E, dim=-1)
         flat_pred_E = masked_pred_E[:, :]
-        loss_E = metric(flat_pred_E, flat_true_E)
+        loss_E = torch.log((flat_pred_E*flat_true_E).sum(-1))
         loss_E = loss_E.reshape(b,-1)
         
-        return -loss_X,-loss_E
+        return loss_X,loss_E
 
 
     def configure_optimizers(self):
@@ -1095,7 +1095,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             elif "nodes" in self.cfg.dataset:
                 samples_left_to_generate = 2048
             else:
-                samples_left_to_generate = 512
+                samples_left_to_generate = 16
             samples_left_to_save = self.cfg.general.final_model_samples_to_save
             chains_left_to_save = self.cfg.general.final_model_chains_to_save
             samples = []
