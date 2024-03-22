@@ -5,7 +5,7 @@ This paper introduces $\textit{graph diffusion policy optimization}$ (GDPO), a n
 conda create --name GDPO --file spec-list.txt
 conda activate GDPO
 pip install -r requrements.txt
-cd /analysis/orca
+cd analysis/orca
 g++ -O2 -std=c++11 -o orca orca.cpp
 ```
 If there are still issues, please refer to DiGress and add other dependencies as necessary.
