@@ -227,8 +227,12 @@ def main(cfg: DictConfig):
                 topk = 0
             else:
                 topk = 50
+            if "target_prop" in cfg.general:
+                prefix = cfg.general.target_prop+"_"+str(cfg.general.seed)
+            else:
+                prefix = str(cfg.general.seed)
             checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.general.name}",
-                                                filename=generate_random_letter(2)+str(cfg.general.seed)+"_"+'{epoch}-{val/epoch_score:.4f}',
+                                                filename=prefix+"_"+'{epoch}-{val/epoch_score:.4f}',
                                                 monitor="val/epoch_score",
                                                 save_top_k=topk,
                                                 mode='max',
