@@ -69,6 +69,7 @@ class MOSESDataset(InMemoryDataset):
         bonds = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3}
 
         path = self.split_paths[self.file_idx]
+        print("the path is ",path)
         smiles_list = pd.read_csv(path)['smiles'].values
 
         data_list = []
