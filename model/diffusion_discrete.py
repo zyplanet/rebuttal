@@ -892,6 +892,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_X = true_X[:, :]
         flat_true_X = torch.argmax(flat_true_X, dim=-1)
         flat_pred_X = masked_pred_X[:, :]
+        flat_true_X = F.one_hot(flat_true_X, num_classes=flat_pred_X.shape[-1]).float()
         loss_X = torch.log((flat_pred_X*flat_true_X).sum(-1))
         loss_X = loss_X.reshape(b,-1)
         ratio_X = torch.exp(loss_X-logpX)
@@ -906,6 +907,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_E = true_E[:, :]
         flat_true_E = torch.argmax(flat_true_E, dim=-1)
         flat_pred_E = masked_pred_E[:, :]
+        flat_true_E = F.one_hot(flat_true_E, num_classes=flat_pred_E.shape[-1]).float()
         loss_E = torch.log((flat_pred_E*flat_true_E).sum(-1))
         loss_E = loss_E.reshape(b,-1)
         ratio_E = torch.exp(loss_E-logpE)
@@ -974,11 +976,13 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         flat_true_X = true_X[:, :]
         flat_true_X = torch.argmax(flat_true_X, dim=-1)
         flat_pred_X = masked_pred_X[:, :]
+        flat_true_X = F.one_hot(flat_true_X, num_classes=flat_pred_X.shape[-1]).float()
         loss_X = torch.log((flat_pred_X*flat_true_X).sum(-1))
         loss_X = loss_X.reshape(b,-1)
         flat_true_E = true_E[:, :]
         flat_true_E = torch.argmax(flat_true_E, dim=-1)
         flat_pred_E = masked_pred_E[:, :]
+        flat_true_E = F.one_hot(flat_true_E, num_classes=flat_pred_E.shape[-1]).float()
         loss_E = torch.log((flat_pred_E*flat_true_E).sum(-1))
         loss_E = loss_E.reshape(b,-1)
         
@@ -2420,11 +2424,6 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         s0 = sampled_s.mask(node_mask, collapse=True)
         X, E, y = s0.X, s0.E, s0.y
         molecule_list = []
-        for i in range(batch_size):
-            n = n_nodes[i]
-            atom_types = X[i, :n].cpu()
-            edge_types = E[i, :n, :n].cpu()
-            molecule_list.append([atom_types, edge_types])
         if "ogbg" in self.cfg.dataset.name:
             valid_list,uniq,freq_list,reward_list = compute_molecular_metrics_list(molecule_list,self.dataset_info)
             for idx,freq in enumerate(freq_list):
@@ -2512,31 +2511,16 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             t_norm = t_array / self.T
 
             # Sample z_s
-            sampled_s, _ = self.sample_p_zs_given_zt(
+            sampled_s, logP = self.sample_p_zs_given_zt_ppo(
                 s_norm, t_norm, X, E, y, node_mask)
             X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
             X_traj.append(X.cpu())
             E_traj.append(E.cpu())
+            Xlogp_traj.append(logP[0].cpu())
+            Elogp_traj.append(logP[1].cpu())
         #compute reward
         s0 = sampled_s.mask(node_mask, collapse=True)
         X, E, y = s0.X, s0.E, s0.y
-        X0,E0 = X_traj[-1].cuda(),E_traj[-1].cuda()
-        for idx in range(self.T):
-            X_t,E_t = X_traj[idx],E_traj[idx]
-            t_int = (self.T-idx)*torch.ones((batch_size,1))
-            y=torch.zeros(batch_size, 0)
-            t_float = t_int/self.T
-            s_float = (t_int-1)/self.T
-            t_float,s_float = t_float.cuda(),s_float.cuda()
-            X_t,E_t,y = X_t.cuda(),E_t.cuda(),y.cuda()
-            z_t = utils.PlaceHolder(X=X_t, E=E_t, y=y).type_as(X_t).mask(node_mask)
-            noisy_data = {'t': t_float, 'X_t': z_t.X, 'E_t': z_t.E, 'y_t': z_t.y, 'node_mask': node_mask}
-            extra_data = self.compute_extra_data(noisy_data)
-            pred = self.forward(noisy_data, extra_data, node_mask)
-            # print("logp X0 E0",X0.shape,E0.shape)
-            logp_X,logp_E = self.logp(pred.X,pred.E,None,X0,E0,None)
-            Xlogp_traj.append(logp_X.cpu())
-            Elogp_traj.append(logp_E.cpu())
         molecule_list = []
         for i in range(batch_size):
             n = n_nodes[i]
