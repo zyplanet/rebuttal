@@ -610,6 +610,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 advantages = torch.clamp(rewards, -5, 5).cuda()
                 advantages[rewards_mask]=0
                 #accumulation on T steps
+                # print("the advantages is ", advantages.shape)
                 sample_idx = random.sample(list(range(self.T)),int(self.T*self.cfg.general.ppo_sr))
                 for idx in sample_idx:
                     X_t,E_t = X_now[idx],E_now[idx]
@@ -754,7 +755,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     extra_data = self.compute_extra_data(noisy_data)
                     pred = self.forward(noisy_data, extra_data, node_mask)
                     xlogp,elogp = xlogp.cuda(),elogp.cuda()
-                    loss_X,loss_E = self.isppo_loss(masked_pred_X = pred.X,masked_pred_E=pred.E,pred_y=pred.y,true_X=X_0,true_E=E_0, true_y=y,logpX=xlogp,logpE=elogp,reweight=advantages)
+                    loss_X,loss_E = self.isppo_loss(masked_pred_X = F.softmax(pred.X,-1),masked_pred_E=F.softmax(pred.E,-1),pred_y=pred.y,true_X=X_0,true_E=E_0, true_y=y,logpX=xlogp,logpE=elogp,reweight=advantages)
                     X_bs,E_bs = len(loss_X),len(loss_E)
                     pos_loss += (loss_X[loss_X>=0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E>=0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
                     neg_loss += (loss_X[loss_X<0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E<0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
@@ -2424,6 +2425,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         s0 = sampled_s.mask(node_mask, collapse=True)
         X, E, y = s0.X, s0.E, s0.y
         molecule_list = []
+        for i in range(batch_size):
+            n = n_nodes[i]
+            atom_types = X[i, :n].cpu()
+            edge_types = E[i, :n, :n].cpu()
+            molecule_list.append([atom_types, edge_types])
         if "ogbg" in self.cfg.dataset.name:
             valid_list,uniq,freq_list,reward_list = compute_molecular_metrics_list(molecule_list,self.dataset_info)
             for idx,freq in enumerate(freq_list):
@@ -2511,16 +2517,31 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             t_norm = t_array / self.T
 
             # Sample z_s
-            sampled_s, logP = self.sample_p_zs_given_zt_ppo(
+            sampled_s, _ = self.sample_p_zs_given_zt(
                 s_norm, t_norm, X, E, y, node_mask)
             X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
             X_traj.append(X.cpu())
             E_traj.append(E.cpu())
-            Xlogp_traj.append(logP[0].cpu())
-            Elogp_traj.append(logP[1].cpu())
         #compute reward
         s0 = sampled_s.mask(node_mask, collapse=True)
         X, E, y = s0.X, s0.E, s0.y
+        X0,E0 = X_traj[-1].cuda(),E_traj[-1].cuda()
+        for idx in range(self.T):
+            X_t,E_t = X_traj[idx],E_traj[idx]
+            t_int = (self.T-idx)*torch.ones((batch_size,1))
+            y=torch.zeros(batch_size, 0)
+            t_float = t_int/self.T
+            s_float = (t_int-1)/self.T
+            t_float,s_float = t_float.cuda(),s_float.cuda()
+            X_t,E_t,y = X_t.cuda(),E_t.cuda(),y.cuda()
+            z_t = utils.PlaceHolder(X=X_t, E=E_t, y=y).type_as(X_t).mask(node_mask)
+            noisy_data = {'t': t_float, 'X_t': z_t.X, 'E_t': z_t.E, 'y_t': z_t.y, 'node_mask': node_mask}
+            extra_data = self.compute_extra_data(noisy_data)
+            pred = self.forward(noisy_data, extra_data, node_mask)
+            # print("logp X0 E0",X0.shape,E0.shape)
+            logp_X,logp_E = self.logp(F.softmax(pred.X,-1),F.softmax(pred.E,-1),None,X0,E0,None)
+            Xlogp_traj.append(logp_X.cpu())
+            Elogp_traj.append(logp_E.cpu())
         molecule_list = []
         for i in range(batch_size):
             n = n_nodes[i]
