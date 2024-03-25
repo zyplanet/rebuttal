@@ -1,4 +1,5 @@
 #!/bin/bash //
-train_method="isgdpo"
+train_method="isddpo"
 val_method="ppo"
-python main_generate.py -m dataset="zinc" +experiment=zinc_ppo_parp1.yaml general.train_method=$train_method general.val_method=$val_method general.seed=$RANDOM
+device=2
+python main_generate.py -m dataset="zinc" +experiment=zinc_ppo_fa7.yaml general.train_method=$train_method general.val_method=$val_method general.device=$device general.seed=$RANDOM
