@@ -205,7 +205,7 @@ def main(cfg: DictConfig):
         model_kwargs = {'dataset_infos': dataset_infos, 'train_metrics': train_metrics,
                         'sampling_metrics': sampling_metrics, 'visualization_tools': visualization_tools,
                         'extra_features': extra_features, 'domain_features': domain_features}
-    if cfg.general.test_only:
+    if cfg.general.test_only and type(cfg.general.test_only)==type("a"):
         # When testing, previous configuration is fully loaded
         cfg, _ = get_resume(cfg, model_kwargs)
         os.chdir(cfg.general.test_only.split('checkpoints')[0])
@@ -231,6 +231,7 @@ def main(cfg: DictConfig):
                 prefix = cfg.general.target_prop+"_"+str(cfg.general.seed)
             else:
                 prefix = str(cfg.general.seed)
+            print("the prefix is",prefix)
             checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.general.name}",
                                                 filename=prefix+"_"+'{epoch}-{val/epoch_score:.4f}',
                                                 monitor="val/epoch_score",
@@ -364,10 +365,29 @@ def main(cfg: DictConfig):
             model = LiftedDenoisingDiffusion(cfg=cfg, **model_kwargs)
         if cfg.dataset.name in ["zinc","moses"]:
             model.train_smiles = train_smiles
+        sd_dict = {"planar":home_prefix+"pretrained/planarpretrained.pt",
+                        "sbm":home_prefix+"pretrained/sbmpretrained.pt",
+                        "zinc":home_prefix+"pretrained/zincpretrained.pt",
+                        "moses":home_prefix+"pretrained/mosespretrained.pt"}
+        # sd_dict = {"planar":home_prefix+"final/planar7812.pt",
+        #                 "sbm":home_prefix+"final/sbm8281.pt",
+        #                 }
+        # sd_dict = {}
+        print("batch size is {}".format(cfg.train.batch_size))
+        if cfg.dataset.name in sd_dict and cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"] and "nodes" not in cfg.dataset:
+            sd = torch.load(sd_dict[cfg.dataset.name])
+            new_sd = {}
+            for k,v in sd.items():
+                if "model" in k:
+                    new_sd[k[6:]]=v
+            model.model.load_state_dict(new_sd)
+            model.model.cuda()
+            print("load pretrained model")
+        print("load from check point")
         model.ckpt = cfg.general.test_only
-        trainer.test(model, datamodule=datamodule,
-                     ckpt_path=cfg.general.test_only)
-        # trainer.test(model, datamodule=datamodule)
+        # trainer.test(model, datamodule=datamodule,
+        #              ckpt_path=cfg.general.test_only)
+        trainer.test(model, datamodule=datamodule)
         cfg.general.evaluate_all_checkpoints=False
         
         if cfg.general.evaluate_all_checkpoints:
