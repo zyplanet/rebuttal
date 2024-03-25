@@ -402,6 +402,58 @@ def is_sbm_graph(G, p_intra=0.3, p_inter=0.005, strict=True, refinement_steps=10
     else:
         return p
 
+def spectral_worker(G, n_eigvals=-1):
+    # eigs = nx.laplacian_spectrum(G)
+    try:
+        eigs = eigvalsh(nx.normalized_laplacian_matrix(G).todense())
+    except:
+        eigs = np.zeros(G.number_of_nodes())
+    if n_eigvals > 0:
+        eigs = eigs[1:n_eigvals + 1]
+    spectral_pmf, _ = np.histogram(eigs, bins=200, range=(-1e-5, 2), density=False)
+    spectral_pmf = spectral_pmf / spectral_pmf.sum()
+    return spectral_pmf
+
+def spectral_statslist(graph_ref_list, graph_pred_list, is_parallel=True, n_eigvals=-1, compute_emd=False):
+    ''' Compute the distance between the degree distributions of two unordered sets of graphs.
+        Args:
+            graph_ref_list, graph_target_list: two lists of networkx graphs to be evaluated
+        '''
+    sample_ref = []
+    sample_pred = []
+    # in case an empty graph is generated
+    graph_pred_list_remove_empty = [
+        G for G in graph_pred_list if not G.number_of_nodes() == 0
+    ]
+
+    if is_parallel:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            for spectral_density in executor.map(spectral_worker, graph_ref_list, [n_eigvals for i in graph_ref_list]):
+                sample_ref.append(spectral_density)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            for spectral_density in executor.map(spectral_worker, graph_pred_list_remove_empty,
+                                                 [n_eigvals for i in graph_ref_list]):
+                sample_pred.append(spectral_density)
+    else:
+        for i in range(len(graph_ref_list)):
+            spectral_temp = spectral_worker(graph_ref_list[i], n_eigvals)
+            sample_ref.append(spectral_temp)
+        for i in range(len(graph_pred_list_remove_empty)):
+            spectral_temp = spectral_worker(graph_pred_list_remove_empty[i], n_eigvals)
+            sample_pred.append(spectral_temp)
+
+    # mmd_dist = compute_mmd(sample_ref, sample_pred, kernel=gaussian_emd)
+    # mmd_dist = compute_mmd(sample_ref, sample_pred, kernel=emd)
+    if compute_emd:
+        # EMD option uses the same computation as GraphRNN, the alternative is MMD as computed by GRAN
+        # mmd_dist = compute_mmd(sample_ref, sample_pred, kernel=emd)
+        mmd_dist = compute_mmdlist(sample_ref, sample_pred, kernel=gaussian_emd)
+    else:
+        mmd_dist = compute_mmdlist(sample_ref, sample_pred, kernel=gaussian_tv)
+    # mmd_dist = compute_mmd(sample_ref, sample_pred, kernel=gaussian)
+    return mmd_dist
+
+
 def distance2score(dlist,sigma=1):
     score_list = [np.e**(-x**1/(sigma**1)) for x in dlist]
     return score_list
@@ -448,16 +500,19 @@ def gen_reward_list(generated_graphs,train_graphs,dataname):
     degrees = degree_statslist(reference_graphs, networkx_graphs, is_parallel=True,
                             compute_emd=False)
 
-    score_list += np.array(distance2score(degrees,base["degree"]))
+    score_list += np.array(distance2score(degrees,1))
 
-    clustering = clustering_statslist(reference_graphs, networkx_graphs, bins=100, is_parallel=True,
-                                    compute_emd=False)
-    score_list+=np.array(distance2score(clustering,base["clustering"]))
+    # clustering = clustering_statslist(reference_graphs, networkx_graphs, bins=100, is_parallel=True,
+    #                                 compute_emd=False)
+    # score_list+=np.array(distance2score(clustering,base["clustering"]))
 
-    orbit = orbit_stats_alllist(reference_graphs, networkx_graphs, compute_emd=False)
-    score_list += np.array(distance2score(orbit,base["orbit"]))
+    # orbit = orbit_stats_alllist(reference_graphs, networkx_graphs, compute_emd=False)
+    # score_list += np.array(distance2score(orbit,base["orbit"]))
 
-    score_list = score_list/3
+    spec = spectral_statslist(reference_graphs,networkx_graphs)
+    score_list += np.array(distance2score(spec,1))
+
+    score_list = score_list/2
 
     if dataname=="sbm":
         acc = eval_acc_sbm_graphlist(networkx_graphs, refinement_steps=100, strict=True)
