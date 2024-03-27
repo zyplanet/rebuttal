@@ -1575,7 +1575,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         """ Measure likelihood on a test set and compute stability metrics. """
         self.model.eval()
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
-        samples_left_to_generate = 12
+        samples_left_to_generate = 1024
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
         workdir = os.getcwd()
