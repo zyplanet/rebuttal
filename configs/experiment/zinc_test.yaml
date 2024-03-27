@@ -4,7 +4,8 @@ general:
     gpus : 1
     wandb: 'disabled'
     resume: null         # If resume, path to ckpt file from outputs directory in main directory
-    test_only: '/data/home/liuyijing/rebuttal/multirun/2024-03-23/20-14-38/0/checkpoints/zinc/fa7_31476_epoch=0-val/epoch_score=0.4854.ckpt'
+    test_only: "/data/home/liuyijing/rebuttal/multirun/2024-03-23/20-14-38/0/checkpoints/zinc/fa7_31476_epoch=0-val/epoch_score=0.4608.ckpt"
+    # test_only: True
     check_val_every_n_epochs: 1
     sample_every_val: 1
     samples_to_generate: 40
@@ -28,7 +29,7 @@ general:
 train:
     lr: 0.00001
     n_epochs: 1000
-    batch_size: 256
+    batch_size: 6
     weight_decay: 1e-12
     save_model: True
 model:
