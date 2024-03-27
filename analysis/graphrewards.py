@@ -500,19 +500,19 @@ def gen_reward_list(generated_graphs,train_graphs,dataname):
     degrees = degree_statslist(reference_graphs, networkx_graphs, is_parallel=True,
                             compute_emd=False)
 
-    score_list += np.array(distance2score(degrees,1))
+    score_list += np.array(distance2score(degrees,0.1))
 
-    # clustering = clustering_statslist(reference_graphs, networkx_graphs, bins=100, is_parallel=True,
-    #                                 compute_emd=False)
-    # score_list+=np.array(distance2score(clustering,base["clustering"]))
+    clustering = clustering_statslist(reference_graphs, networkx_graphs, bins=100, is_parallel=True,
+                                    compute_emd=False)
+    score_list+=np.array(distance2score(clustering,base["clustering"]))
 
-    # orbit = orbit_stats_alllist(reference_graphs, networkx_graphs, compute_emd=False)
-    # score_list += np.array(distance2score(orbit,base["orbit"]))
+    orbit = orbit_stats_alllist(reference_graphs, networkx_graphs, compute_emd=False)
+    score_list += np.array(distance2score(orbit,base["orbit"]))
 
-    spec = spectral_statslist(reference_graphs,networkx_graphs)
-    score_list += np.array(distance2score(spec,1))
+    # spec = spectral_statslist(reference_graphs,networkx_graphs)
+    # score_list += np.array(distance2score(spec,1))
 
-    score_list = score_list/2
+    score_list = score_list/3
 
     if dataname=="sbm":
         acc = eval_acc_sbm_graphlist(networkx_graphs, refinement_steps=100, strict=True)

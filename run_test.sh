@@ -1,4 +1,5 @@
 #!/bin/bash 
 test_method="evalproperty"
-
-python main_generate.py -m dataset=$dataset +experiment=fa7_moses_test.yaml  general.target_prop=$target_prop general.seed=$RANDOM
+dataset="zinc"
+device=0
+python main_generate.py -m dataset=$dataset +experiment=zinc_test.yaml general.device=$device  general.target_prop="parp1" general.pretrain=True general.seed=$RANDOM

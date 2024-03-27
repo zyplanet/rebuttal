@@ -227,7 +227,7 @@ def main(cfg: DictConfig):
                 topk = 0
             else:
                 topk = 50
-            if "target_prop" in cfg.general:
+            if cfg.dataset.name in ["zinc","moses"]:
                 prefix = cfg.general.target_prop+"_"+str(cfg.general.seed)
             else:
                 prefix = str(cfg.general.seed)
@@ -357,37 +357,48 @@ def main(cfg: DictConfig):
             trainer.test(model, datamodule=datamodule)
     else:
         # Start by evaluating test_only_path
-        # cfg.general.test_method="evalproperty"
-        cfg.general.test_method = "evalgeneral"
+        cfg.general.test_method="evalproperty"
+        # cfg.general.test_method = "evalgeneral"
         if cfg.model.type == 'discrete':
             model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
         else:
             model = LiftedDenoisingDiffusion(cfg=cfg, **model_kwargs)
         if cfg.dataset.name in ["zinc","moses"]:
             model.train_smiles = train_smiles
-        sd_dict = {"planar":home_prefix+"pretrained/planarpretrained.pt",
-                        "sbm":home_prefix+"pretrained/sbmpretrained.pt",
-                        "zinc":home_prefix+"pretrained/zincpretrained.pt",
-                        "moses":home_prefix+"pretrained/mosespretrained.pt"}
-        # sd_dict = {"planar":home_prefix+"final/planar7812.pt",
-        #                 "sbm":home_prefix+"final/sbm8281.pt",
-        #                 }
-        # sd_dict = {}
-        print("batch size is {}".format(cfg.train.batch_size))
-        if cfg.dataset.name in sd_dict and cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"] and "nodes" not in cfg.dataset:
-            sd = torch.load(sd_dict[cfg.dataset.name])
-            new_sd = {}
-            for k,v in sd.items():
-                if "model" in k:
-                    new_sd[k[6:]]=v
-            model.model.load_state_dict(new_sd)
-            model.model.cuda()
-            print("load pretrained model")
-        print("load from check point")
+        # if cfg.general.pretrain:
+        #     print("load from pretrained models")
+        #     sd_dict = {"planar":home_prefix+"pretrained/planarpretrained.pt",
+        #                     "sbm":home_prefix+"pretrained/sbmpretrained.pt",
+        #                     "zinc":home_prefix+"pretrained/zincpretrained.pt",
+        #                     "moses":home_prefix+"pretrained/mosespretrained.pt"}
+        # else:
+        #     # sd_dict = {"planar":home_prefix+"final/planar7812.pt",
+        #     #                 "sbm":home_prefix+"final/sbm8281.pt",
+        #     #                 "zinc":home_prefix+""
+        #     #                 }
+        #     sd_dict = {"parp1":home_prefix+"final/zincparp10948.pt",
+        #     "fa7":home_prefix+"final/zincfa70505.pt",
+        #     "5ht1b":home_prefix+"final/zinc5ht1b3004.pt",
+        #     "braf":home_prefix+"final/zincbraf1083.pt",
+        #     "jak2":home_prefix+"final/zincjak21419.pt",
+        #     }
+        # # sd_dict = {}
+        # # print("load path is {}".format(sd_dict[cfg.dataset.name]))
+        # if cfg.dataset.name=="zinc":
+        #     sd = torch.load(sd_dict[cfg.dataset.name])
+        #     # sd = torch.load(sd_dict[cfg.general.target_prop])
+        #     new_sd = {}
+        #     for k,v in sd.items():
+        #         if "model" in k:
+        #             new_sd[k[6:]]=v
+        #     model.model.load_state_dict(new_sd)
+        #     model.model.cuda()
+        #     # print("load model")
+        # print("load from check point")
         model.ckpt = cfg.general.test_only
-        # trainer.test(model, datamodule=datamodule,
-        #              ckpt_path=cfg.general.test_only)
-        trainer.test(model, datamodule=datamodule)
+        trainer.test(model, datamodule=datamodule,
+                     ckpt_path=cfg.general.test_only)
+        # trainer.test(model, datamodule=datamodule)
         cfg.general.evaluate_all_checkpoints=False
         
         if cfg.general.evaluate_all_checkpoints:

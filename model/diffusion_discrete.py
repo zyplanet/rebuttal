@@ -26,6 +26,7 @@ import wandb
 import random
 import os
 import sys
+import re
 import json
 from datetime import datetime
 import numpy as np
@@ -1574,19 +1575,24 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         """ Measure likelihood on a test set and compute stability metrics. """
         self.model.eval()
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
-        samples_left_to_generate = 2048
+        samples_left_to_generate = 1024
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
-
+        workdir = os.getcwd()
+        print("os working dir",workdir)
+        if "multirun" in workdir:
+            home_prefix = "./../../../../"
+        else:
+            home_prefix = "./../../../"
         samples = []
         id = 0
         start = time.time()
-        seed= 6666
-        if seed is not None:
-            torch.manual_seed(seed)
-            torch.cuda.manual_seed(seed)
-            np.random.seed(seed)
-            random.seed(seed)
+        # seed= 6666
+        # if seed is not None:
+        #     torch.manual_seed(seed)
+        #     torch.cuda.manual_seed(seed)
+        #     np.random.seed(seed)
+        #     random.seed(seed)
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
         samples = []
@@ -1604,64 +1610,84 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             samples_left_to_save -= to_save
             samples_left_to_generate -= to_generate
             chains_left_to_save -= chains_save
-        filename = "generated_samples_orig_num{}_seed{}_prop{}.txt".format(len(samples),seed,self.cfg.general.target_prop)
-        with open(filename, 'w') as f:
-            for item in samples:
-                f.write(f"N={item[0].shape[0]}\n")
-                atoms = item[0].tolist()
-                f.write("X: \n")
-                for at in atoms:
-                    f.write(f"{at} ")
-                f.write("\n")
-                f.write("E: \n")
-                for bond_list in item[1]:
-                    for bond in bond_list:
-                        f.write(f"{bond} ")
-                    f.write("\n")
-                f.write("\n")
-        print("Saved.")
-        sperate = 512
+        # filename = "generated_samples_orig_num{}_seed{}_prop{}.txt".format(len(samples),seed,self.cfg.general.target_prop)
+        # with open(filename, 'w') as f:
+        #     for item in samples:
+        #         f.write(f"N={item[0].shape[0]}\n")
+        #         atoms = item[0].tolist()
+        #         f.write("X: \n")
+        #         for at in atoms:
+        #             f.write(f"{at} ")
+        #         f.write("\n")
+        #         f.write("E: \n")
+        #         for bond_list in item[1]:
+        #             for bond in bond_list:
+        #                 f.write(f"{bond} ")
+        #             f.write("\n")
+        #         f.write("\n")
+        # print("Saved.")
+        sperate = 256
         K = len(samples)//sperate
         #train-test base perform
         time_stamp = "{}".format(datetime.now())
-        if self.train_fps is None:
-            print("prepare train fps")
-            assert self.train_smiles is not None
-            train_mols = [Chem.MolFromSmiles(smi) for smi in self.train_smiles]
-            self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
-        logfile = self.home_prefix+"test_property_result.log"
-        for idx in range(K):
-            print("start eval idx {}".format(idx))
-            subsamples = samples[idx*sperate:min((idx+1)*sperate,len(samples))]
-            print(self.dataset_info)
-            smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(subsamples,self.dataset_info)
-            valid = [x for x in smiles if x is not None]
-            print(self.cfg.dataset.name,"dataset name is ")
-            if self.cfg.dataset.name == "moses":
-                result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
-            else:
-                result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
-            logf = open(logfile,"a+")
-            print(result)
-            write_dict = {
-                "time":time_stamp,
-                "dataset":self.cfg.dataset.name,
-                "step_freq":self.cfg.general.step_freq,
-                "target_prop":self.cfg.general.target_prop,
-                "VALID":round(100*valid_r,4),
-                "UNIQ":round(100*uniq_r,4),
-                "novelty":result["novelty"],
-                "top_ds":result["top_ds"],
-                "avgscore":result["avgscore"],
-                "hit":result["hit"],
-                "avgds": round(result["avgds"],4),
-                "avgqed": round(result["avgqed"],4),
-                "avgsa": round(result["avgsa"],4)
-            }
-            smile_path = "sample_smi"
-            line = json.dumps(write_dict)+"\n"
-            logf.write(line)
-            logf.close()
+        # if self.train_fps is None:
+        #     print("prepare train fps")
+        #     assert self.train_smiles is not None
+        #     train_mols = [Chem.MolFromSmiles(smi) for smi in self.train_smiles]
+        #     self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
+        
+        logfile = home_prefix+"test_property_result.log"
+        smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(samples,self.dataset_info)
+        # print(smiles)
+        # if self.cfg.general.pretrain:
+        #     smile_path = home_prefix+"smiles_num{}_pretrain{}_val{:.2f}.txt".format(len(samples),self.cfg.dataset.name,100*valid_r)
+        # else:
+            # smile_path = home_prefix+"smiles_num{}_prop{}_val{:.2f}.txt".format(len(samples),self.cfg.general.target_prop,100*valid_r)
+        seed = self.cfg.general.test_only.split("/")[-2].split("_")[-2]
+        target = self.cfg.general.test_only.split("/")[-2].split("_")[-3]
+        smile_path = home_prefix+"smiles_num{}_prop{}_seed{}_val{:.2f}.txt".format(len(samples),target,seed,100*valid_r)
+        with open(smile_path,'w') as f:
+            for smi in smiles:
+                if smi is not None:
+                    f.write(smi+"\n")
+        f.close()
+
+        # for idx in range(K):
+        #     print("start eval idx {}".format(idx))
+        #     subsamples = samples[idx*sperate:min((idx+1)*sperate,len(samples))]
+        #     print(self.dataset_info)
+        #     smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(subsamples,self.dataset_info)
+        #     valid = [x for x in smiles if x is not None]
+        #     print(self.cfg.dataset.name,"dataset name is ")
+        #     with open(smile_path,"a+") as f:
+        #         for smi in smiles:
+        #             f.write(smi+"\n")
+        #     f.close()
+            # if self.cfg.dataset.name == "moses":
+            #     result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+            # else:
+            #     result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+            # logf = open(logfile,"a+")
+            # print(result)
+            # write_dict = {
+            #     "time":time_stamp,
+            #     "dataset":self.cfg.dataset.name,
+            #     "step_freq":self.cfg.general.step_freq,
+            #     "target_prop":self.cfg.general.target_prop,
+            #     "VALID":round(100*valid_r,4),
+            #     "UNIQ":round(100*uniq_r,4),
+            #     "novelty":result["novelty"],
+            #     "top_ds":result["top_ds"],
+            #     "avgscore":result["avgscore"],
+            #     "hit":result["hit"],
+            #     "avgds": round(result["avgds"],4),
+            #     "avgqed": round(result["avgqed"],4),
+            #     "avgsa": round(result["avgsa"],4)
+            # }
+            # smile_path = "sample_smi"
+            # line = json.dumps(write_dict)+"\n"
+            # logf.write(line)
+            # logf.close()
     
     def test_epoch_end_evalgeneral(self, outs) -> None:
         """ Measure likelihood on a test set and compute stability metrics. """
@@ -1683,9 +1709,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
         if self.cfg.dataset.name == "sbm":
-            samples_left_to_generate = 512
+            samples_left_to_generate = 1024
         elif self.cfg.dataset.name == "planar":
-            samples_left_to_generate = 512
+            samples_left_to_generate = 1024
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
 
@@ -1746,6 +1772,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             "dataname":self.cfg.dataset.name,
             "testperf": True,
             "degree":round(res["degree"],6),
+            "spec":round(res["spectre"],6),
             "clustering":round(res["clustering"],6),
             "orbit":round(res["orbit"],6),
         }
@@ -1754,9 +1781,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         logf.close()
 
         if self.cfg.dataset.name == "sbm":
-            sperate = 128
+            sperate = 256
         elif self.cfg.dataset.name == "planar":
-            sperate = 128
+            sperate = 256
         K = len(samples)//sperate
         #train-test base perform
         time_stamp = "{}".format(datetime.now())
@@ -1771,10 +1798,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             logf = open(logfile,"a+")
             write_dict = {
                 "time": time_stamp,
+                "pretrain": self.cfg.general.pretrain,
                 "train_method":self.cfg.general.train_method,
                 "innerloop":self.cfg.general.innerloop,
                 "partial":self.cfg.general.partial,
                 "degree":round(res["degree"],6),
+                "spec":round(res["spectre"],6), 
                 "clustering":round(res["clustering"],6),
                 "orbit":round(res["orbit"],6),
                 "non_iso":round(res["sampling/frac_non_iso"],6),
