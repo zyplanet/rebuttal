@@ -100,7 +100,90 @@ class SpectreGraphDataset(InMemoryDataset):
             data_list.append(data)
         torch.save(self.collate(data_list), self.processed_paths[0])
 
+class ToyGraphDataset(InMemoryDataset):
+    def __init__(self, dataset_name, split, root, transform=None, pre_transform=None, pre_filter=None, data_path=None):
+        self.dataset_name = dataset_name
+        self.split = split
+        self.num_graphs = 400
+        self.data_path = data_path
+        self.root = root
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.data, self.slices = torch.load(self.processed_paths[0])
 
+    @property
+    def raw_file_names(self):
+        return ['train.pt', 'val.pt', 'test.pt']
+
+    @property
+    def processed_file_names(self):
+            return [self.split + '.pt']
+
+    def download(self):
+        """
+        Download raw qm9 files. Taken from PyG QM9 class
+        """
+
+        adjs = torch.load(self.data_path)
+        adjs = [torch.from_numpy(x) for x in adjs]
+        g_cpu = torch.Generator()
+        g_cpu.manual_seed(0)
+
+        test_len = int(round(self.num_graphs * 0.2))
+        train_len = int(round((self.num_graphs - test_len) * 0.8))
+        val_len = self.num_graphs - train_len - test_len
+        indices = torch.randperm(self.num_graphs, generator=g_cpu)
+        print(f'Dataset sizes: train {train_len}, val {val_len}, test {test_len}')
+        train_indices = indices[:train_len]
+        val_indices = indices[train_len:train_len + val_len]
+        test_indices = indices[train_len + val_len:]
+
+        train_data = []
+        val_data = []
+        test_data = []
+
+        for i, adj in enumerate(adjs):
+            if i in train_indices:
+                train_data.append(adj)
+            elif i in val_indices:
+                val_data.append(adj)
+            elif i in test_indices:
+                test_data.append(adj)
+            else:
+                raise ValueError(f'Index {i} not in any split')
+        # print(self.raw_paths[0])
+        self.raw_paths[0] = os.path.join(self.root,"raw","train.pt")
+        self.raw_paths[1] = os.path.join(self.root,"raw","val.pt")
+        self.raw_paths[2] = os.path.join(self.root,"raw","test.pt")
+        torch.save(train_data, self.raw_paths[0])
+        torch.save(val_data, self.raw_paths[1])
+        torch.save(test_data, self.raw_paths[2])
+
+
+    def process(self):
+        file_idx = {'train': 0, 'val': 1, 'test': 2}
+        raw_dataset = torch.load(self.raw_paths[file_idx[self.split]])
+
+        data_list = []
+        for adj in raw_dataset:
+            n = adj.shape[-1]
+            X = torch.ones(n, 1, dtype=torch.float)
+            y = torch.zeros([1, 0]).float()
+            # adj  = torch.from_numpy(adj)
+            edge_index, _ = torch_geometric.utils.dense_to_sparse(adj)
+            edge_attr = torch.zeros(edge_index.shape[-1], 2, dtype=torch.float)
+            edge_attr[:, 1] = 1
+            num_nodes = n * torch.ones(1, dtype=torch.long)
+            data = torch_geometric.data.Data(x=X, edge_index=edge_index, edge_attr=edge_attr,
+                                             y=y, n_nodes=num_nodes)
+            data_list.append(data)
+
+            if self.pre_filter is not None and not self.pre_filter(data):
+                continue
+            if self.pre_transform is not None:
+                data = self.pre_transform(data)
+
+            data_list.append(data)
+        torch.save(self.collate(data_list), self.processed_paths[0])
 
 class SpectreGraphDataModule(AbstractDataModule):
     def __init__(self, cfg, n_graphs=200):
@@ -116,6 +199,30 @@ class SpectreGraphDataModule(AbstractDataModule):
                                         split='val', root=root_path),
                     'test': SpectreGraphDataset(dataset_name=self.cfg.dataset.name,
                                         split='test', root=root_path)}
+        # print(f'Dataset sizes: train {train_len}, val {val_len}, test {test_len}')
+
+        super().__init__(cfg, datasets)
+        self.inner = self.train_dataset
+        print(type(self.inner))
+
+    def __getitem__(self, item):
+        print("getitem",item)
+        return self.inner[item]
+class ToyGraphDataModule(AbstractDataModule):
+    def __init__(self, cfg, n_graphs=400):
+        self.cfg = cfg
+        self.datadir = cfg.dataset.datadir
+        base_path = pathlib.Path(os.path.realpath(__file__)).parents[2]
+        data_path = cfg.general.data_path
+        self.datadir = "data/"+data_path.split("/")[-1].split("_p0.5.pth")[0]
+        root_path = os.path.join(base_path, self.datadir)
+
+        datasets = {'train': ToyGraphDataset(dataset_name=self.cfg.dataset.name,
+                                                 split='train', root=root_path,data_path=cfg.general.data_path),
+                    'val': ToyGraphDataset(dataset_name=self.cfg.dataset.name,
+                                        split='val', root=root_path,data_path=cfg.general.data_path),
+                    'test': ToyGraphDataset(dataset_name=self.cfg.dataset.name,
+                                        split='test', root=root_path,data_path=cfg.general.data_path)}
         # print(f'Dataset sizes: train {train_len}, val {val_len}, test {test_len}')
 
         super().__init__(cfg, datasets)

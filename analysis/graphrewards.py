@@ -558,3 +558,41 @@ def gen_toy_reward_list(generated_graphs):
         else:
             score_list.append(0)
     return np.array(score_list)
+
+
+def tree_reward(G,size):
+    c = list(nx.find_cliques(G))
+    c = [x for x in c if len(x)==size]
+    # print(c)
+    if len(c)==1:
+        cliq_node = c[0]
+        degs = list(G.degree(cliq_node))
+        count = 0
+        for x in degs:
+            if x[1]==size:
+                count+=1
+            if count==2:
+                break
+        if count!=1:
+            return 0
+        G.remove_nodes_from(cliq_node)
+        if nx.is_tree(G):
+            return 1
+        else:
+            return 0
+    else:
+        return 0
+
+def gen_tree_reward_list(generated_graphs,size=4):
+    networkx_graphs = []
+    adjacency_matrices = []
+    for graph in generated_graphs:
+        node_types, edge_types = graph
+        A = edge_types.bool().cpu().numpy()
+        adjacency_matrices.append(A)
+        nx_graph = nx.from_numpy_array(A)
+        networkx_graphs.append(nx_graph)
+    score_list = []
+    for nx_graph in networkx_graphs:
+        score_list.append(tree_reward(nx_graph,size))
+    return np.array(score_list)

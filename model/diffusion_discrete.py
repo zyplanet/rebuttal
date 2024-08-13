@@ -9,6 +9,7 @@ from scorer.evaluate import evaluatelist as prop_df
 from analysis.graphrewards import gen_reward_label as graph_labels
 from analysis.graphrewards import gen_reward_list as graph_rewards
 from analysis.graphrewards import gen_toy_reward_list as toy_rewards
+from analysis.graphrewards import gen_tree_reward_list as tree_rewards
 from analysis.graphrewards import loader_to_nx
 from diffusion import diffusion_utils
 from diffusion.noise_schedule import DiscreteUniformTransition, PredefinedNoiseScheduleDiscrete,\
@@ -243,6 +244,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         logfile = self.home_prefix+"train_log{}_new.log".format(self.cfg.dataset.name)
         if self.cfg.dataset.name in ["planar","sbm"] and "nodes" not in self.cfg.dataset:
             logfile = self.home_prefix+"train_log3.log"
+        elif self.cfg.dataset.name=="toytree":
+            datapath = self.cfg.general.data_path
+            savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
+            logfile=self.home_prefix+"train_{}_{}_log.log".format(savedir,self.cfg.general.train_method)
         elif "nodes" in self.cfg.dataset:
             logfile = self.home_prefix+"train_log_toy_n{}.log".format(self.cfg.dataset.nodes)
             # self.log("val/epoch_score",rewardavg)
@@ -1098,6 +1103,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 samples_left_to_generate = 64
             elif "nodes" in self.cfg.dataset:
                 samples_left_to_generate = 2048
+            elif self.cfg.dataset.name=="toytree":
+                samples_left_to_generate = 256
             else:
                 samples_left_to_generate = 256
             samples_left_to_save = self.cfg.general.final_model_samples_to_save
@@ -1233,6 +1240,35 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             elif "nodes" in self.cfg.dataset:
                 res = toy_rewards(samples)
                 logfile = self.home_prefix+"evaluation_toy_n{}.log".format(self.cfg.dataset.nodes)
+                avgreward = np.array(res).mean()
+                logf = open(logfile,"a+")
+                avgscore = round(100*np.array(res).sum()/len(res),4)
+                write_dict = {
+                    "lr":self.cfg.train.lr,
+                    "SR":self.cfg.general.ppo_sr,
+                    "train_method": self.cfg.general.train_method,
+                    "batch_size":self.cfg.train.batch_size,
+                    "dataset":self.cfg.dataset.name,
+                    "step_freq":self.cfg.general.step_freq,
+                    "sampleloop":self.cfg.general.sampleloop,
+                    "seed":self.cfg.general.seed,
+                    "interval":self.cfg.general.val_check_interval,
+                    "valround":self.validation_time,
+                    "train_method":self.cfg.general.train_method,
+                    "innerloop":self.cfg.general.innerloop,
+                    "avgreward":round(avgreward,6)
+                }
+                print(write_dict)
+                self.log("val/epoch_score",avgscore)
+                line = json.dumps(write_dict)+"\n"
+                logf.write(line)
+                logf.close()
+                self.validation_time += 1
+            elif self.cfg.dataset.name=="toytree":
+                res = tree_rewards(samples)
+                datapath = self.cfg.general.data_path
+                savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
+                logfile = self.home_prefix+"evaluation_tree_{}_{}.log".format(savedir,self.cfg.general.train_method)
                 avgreward = np.array(res).mean()
                 logf = open(logfile,"a+")
                 avgscore = round(100*np.array(res).sum()/len(res),4)
@@ -2394,6 +2430,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 self.train_graphs = loader_to_nx(self.trainer.datamodule.train_dataloader())
             reward_list = graph_rewards(molecule_list,self.train_graphs,self.cfg.dataset.name)
             validmean = np.array(reward_list).mean().item()
+        elif self.cfg.dataset.name == "toytree":
+            reward_list = tree_rewards(molecule_list)
+            validmean = np.array(reward_list).mean().item() 
         elif "nodes" in self.cfg.dataset:
             reward_list = toy_rewards(molecule_list)
             validmean = np.array(reward_list).mean().item()    

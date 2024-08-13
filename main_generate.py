@@ -130,16 +130,20 @@ def main(cfg: DictConfig):
         home_prefix = "./../../../"
     dataset_config = cfg["dataset"]
     print(dataset_config)
-    if dataset_config["name"] in ['sbm', 'planar']:
-        from dataset.spectre_dataset import SpectreGraphDataModule, SpectreDatasetInfos, ToyDatasetInfos
-        from analysis.spectre_utils import PlanarSamplingMetrics, SBMSamplingMetrics, Comm20SamplingMetrics
+    if dataset_config["name"] in ['sbm', 'planar',"toytree"]:
+        from dataset.spectre_dataset import SpectreGraphDataModule, SpectreDatasetInfos, ToyGraphDataModule,ToyDatasetInfos
+        from analysis.spectre_utils import PlanarSamplingMetrics, SBMSamplingMetrics, Comm20SamplingMetrics, ToySamplingMetrics
         from analysis.visualization import NonMolecularVisualization
-
-        datamodule = SpectreGraphDataModule(cfg)
+        if dataset_config["name"]== "toytree":
+            datamodule = ToyGraphDataModule(cfg)
+        else:
+            datamodule = SpectreGraphDataModule(cfg)
         if dataset_config['name'] == 'sbm':
             sampling_metrics = SBMSamplingMetrics(datamodule)
-        else:
+        elif dataset_config['name'] == 'planar':
             sampling_metrics = PlanarSamplingMetrics(datamodule)
+        else:
+            sampling_metrics = ToySamplingMetrics(datamodule)
         if "nodes" in dataset_config:
             dataset_infos = ToyDatasetInfos(datamodule,dataset_config)
             train_metrics = TrainAbstractMetricsDiscrete() if cfg.model.type == 'discrete' else TrainAbstractMetrics()
@@ -223,7 +227,7 @@ def main(cfg: DictConfig):
     # callbacks.append(lr_monitor)
     if cfg.train.save_model:
         if cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo"]:
-            if "nodes" in cfg.dataset:
+            if "nodes" in cfg.dataset or cfg.dataset.name=="toytree":
                 topk = 0
             else:
                 topk = 50
@@ -231,18 +235,21 @@ def main(cfg: DictConfig):
                 prefix = cfg.general.target_prop+"_"+str(cfg.general.seed)
             else:
                 prefix = str(cfg.general.seed)
-            print("the prefix is",prefix)
-            checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.general.name}",
+            datapath = cfg.general.data_path
+            savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
+            checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{savedir}",
                                                 filename=prefix+"_"+'{epoch}-{val/epoch_score:.4f}',
                                                 monitor="val/epoch_score",
                                                 save_top_k=topk,
                                                 mode='max',
                                                 every_n_train_steps=cfg.general.val_check_interval)
         else:
-            checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.general.name}",
+            datapath = cfg.general.data_path
+            savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
+            checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{savedir}",
                                               filename='{epoch}',
                                               monitor='val/epoch_NLL',
-                                              save_top_k=5,
+                                              save_top_k=10,
                                               mode='min',
                                             #   every_n_train_steps=250,
                                             every_n_epochs=1
@@ -294,7 +301,7 @@ def main(cfg: DictConfig):
                       enable_progress_bar=False,
                       callbacks=callbacks,
                       logger=[])
-
+    print("cfg")
     if not cfg.general.test_only:
         if cfg.general.resume:
             print("config train method",cfg.general.train_method)
@@ -315,6 +322,7 @@ def main(cfg: DictConfig):
                 model.configure_optimizers()
             if cfg.dataset.name in ["zinc","moses"]:
                 model.train_smiles = train_smiles
+            print("load from resume")
         else:
             if cfg.model.type == 'discrete':
                 model = DiscreteDenoisingDiffusion(cfg=cfg, **model_kwargs)
