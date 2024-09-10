@@ -1,13 +1,13 @@
 #!/bin/bash 
 
-train_method="isgdpo"
+train_method="mcddpo"
 val_method="ppo"
 lr=1e-5
 innerloop=1
 sampleloop=1
 step_freq=1
 fix=0.
-nodes=8
+nodes=32
 device=0
 # for run_times in `seq 1 1`:
 # do
