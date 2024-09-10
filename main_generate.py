@@ -226,7 +226,7 @@ def main(cfg: DictConfig):
     callbacks = []
     # callbacks.append(lr_monitor)
     if cfg.train.save_model:
-        if cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo"]:
+        if cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo","mcddpo","mcgdpo"]:
             if "nodes" in cfg.dataset or cfg.dataset.name=="toytree":
                 topk = 0
             else:
@@ -270,7 +270,7 @@ def main(cfg: DictConfig):
     elif name == 'debug':
         print("[WARNING]: Run is called 'debug' -- it will run with fast_dev_run. ")
     # logger = CSVLogger("logs",name = "graphtest")
-    if cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"]:
+    if cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo","mcddpo","mcgdpo"]:
         trainer = Trainer(accelerator='gpu' if torch.cuda.is_available() and cfg.general.gpus > 0 else 'cpu',
                         devices=cfg.general.gpus if torch.cuda.is_available(
                         ) and cfg.general.gpus > 0 else None,
@@ -329,7 +329,7 @@ def main(cfg: DictConfig):
             else:
                 model = LiftedDenoisingDiffusion(cfg=cfg, **model_kwargs)
             unfreeze_key = ["self_attn"]
-            if len(unfreeze_key)>0 and cfg.general.partial and cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"] and "nodes" not in cfg.dataset:
+            if len(unfreeze_key)>0 and cfg.general.partial and cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo","mcddpo","mcgdpo"] and "nodes" not in cfg.dataset:
                 for name,param in model.named_parameters():
                     if "tf_layers" in name:
                         layernum  = int(name.split(".")[2])
@@ -347,7 +347,7 @@ def main(cfg: DictConfig):
                         "moses":home_prefix+"pretrained/mosespretrained.pt"}
             # sd_dict = {}
             print("batch size is {}".format(cfg.train.batch_size))
-            if cfg.dataset.name in sd_dict and cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"] and "nodes" not in cfg.dataset:
+            if cfg.dataset.name in sd_dict and cfg.general.train_method in ["gdpo","ddpo","isddpo","isgdpo","mcddpo","mcgdpo"] and "nodes" not in cfg.dataset:
                 sd = torch.load(sd_dict[cfg.dataset.name])
                 new_sd = {}
                 for k,v in sd.items():

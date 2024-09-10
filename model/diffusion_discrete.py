@@ -40,6 +40,9 @@ from typing import Optional, Union, Dict, Any
 from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
+GAMMA_MC = 0.5
+TB_MC = 1
+
 def to_sparse_batch(x, adj, mask=None):
     # transform x (B x N x D), adj (B x N x N), mask (B x N), here N is N_max
     # to x, edge_index, edge_attr/weight, batch
@@ -194,7 +197,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.train_fps = None
         self.train_graphs = None
         self.ckpt = None
-        if cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo"]:
+        if cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo","mcddpo","mcgdpo"]:
             self.automatic_optimization=False
 
     def training_step(self, data, i):
@@ -202,14 +205,18 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         method = self.cfg.general.train_method
         if method == "orig":
             result = self.train_step_orig(data,i)
-        elif method =="ddpo":
+        elif method == "ddpo":
             result = self.train_step_ddpo(data,i)
-        elif method=="gdpo":
+        elif method == "gdpo":
             result = self.train_step_gdpo(data,i)
-        elif method=="isddpo":
+        elif method == "isddpo":
             result = self.train_step_isddpo(data,i)
-        elif method=="isgdpo":
+        elif method == "isgdpo":
             result = self.train_step_isgdpo(data,i)
+        elif method == "mcddpo":
+            result = self.train_step_mcddpo(data,i)
+        elif method == "mcgdpo":
+            result = self.train_step_mcgdpo(data,i)
         return result
 
     def train_step_orig(self,data, i):
@@ -804,6 +811,270 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             line = json.dumps(write_dict)+"\n"
             logf.write(line)
         self.train_round+=1
+
+    def train_step_mcgdpo(self,data,i):
+        #sampling
+        opt = self.optimizers()
+        bs = self.cfg.train.batch_size
+        sample_list = []
+        avgrewards = 0
+        all_rewards = []
+        gen_start = time.time()
+        for _ in range(self.cfg.general.sampleloop):
+            X_traj,E_traj,node_mask,rewards,rewardsmean = self.sample_batch_mcppo(bs)
+            # print(rewards)
+            avgrewards+=rewardsmean
+            all_rewards+=(rewards.tolist())
+            X_now,E_now = X_traj[:-1],E_traj[:-1]
+            X_0,E_0 = X_traj[-1],E_traj[-1]
+            time_step = torch.Tensor([self.T-x for x in range(self.T)]).repeat(bs,1)
+            #(T,bs)
+            time_step = time_step.permute(1,0)
+            # shuffle along time
+            for idx in range(bs):
+                perm = torch.randperm(self.T)
+                X_now[:,idx,:,:],E_now[:,idx,:,:,:] = X_now[perm,idx,:,:],E_now[perm,idx,:,:,:]
+                time_step[:,idx] = time_step[perm,idx]
+            sample_list.append((X_now[:,:bs,:,:],E_now[:,:bs,:,:,:],X_0[:bs],E_0[:bs],time_step[:,:bs],node_mask[:bs],rewards[:bs]))
+        gen_cost = time.time()-gen_start
+        all_rewards = np.array(all_rewards)
+        self.r_avg = all_rewards[all_rewards!=-1].mean()
+        self.r_std = all_rewards[all_rewards!=-1].std()+1e-8
+        # else:
+        #     self.r_avg = 0.8*self.r_avg+0.2*all_rewards.mean()
+        #     self.r_std = 0.8*self.r_std+0.2*(all_rewards.std()+1e-8)
+        # print(all_rewards[all_rewards!=-1].mean())
+        self.write_reward(self.r_avg,self.r_std)
+        
+        for loop_count in range(self.cfg.general.innerloop):
+            opt.zero_grad()
+            start_time = time.time()
+            total_loss = 0
+            pos_loss = 0
+            neg_loss = 0
+            pos_num = 0
+            neg_num = 0
+            pos_over = 0
+            neg_over = 0
+            for batch_idx in range(self.cfg.general.sampleloop):
+                X_now,E_now,X_0,E_0,time_step,node_mask,rewards = sample_list[batch_idx]
+                rewards_mask = rewards==-1
+                pos_num += (rewards>0).sum().detach().cpu().numpy().item()
+                neg_num += (rewards<=0).sum().detach().cpu().numpy().item()
+                if self.cfg.general.minibatchnorm:
+                    rewardsmean = (rewards[~rewards_mask]).mean()
+                    rewardsstd = (rewards[~rewards_mask]).std()+1e-8
+                else:
+                    rewardsmean = self.r_avg
+                    rewardsstd = self.r_std
+                rewards = (rewards-rewardsmean)/rewardsstd
+                pos_over += (rewards[~rewards_mask]>5).sum().detach().cpu().numpy().item()
+                neg_over += (rewards[~rewards_mask]<-5).sum().detach().cpu().numpy().item()
+                advantages = torch.clamp(rewards, -5, 5).cuda()
+                advantages[rewards_mask]=0
+                #accumulation on T steps
+                X_0,E_0 = X_0.cuda(),E_0.cuda()
+                sample_idx = random.sample(list(range(self.T)),int(self.T*self.cfg.general.ppo_sr))
+                for idx in sample_idx:
+                    X_t,E_t = X_now[idx],E_now[idx]
+                    t_int = time_step[idx].reshape(bs,1)
+                    y=torch.zeros(bs, 0)
+                    t_float = t_int/self.T
+                    s_float = (t_int-1)/self.T
+                    t_float,s_float = t_float.cuda(),s_float.cuda()
+                    X_t,E_t,y = X_t.cuda(),E_t.cuda(),y.cuda()
+                    z_t = utils.PlaceHolder(X=X_t, E=E_t, y=y).type_as(X_t).mask(node_mask)
+                    noisy_data = {'t': t_float, 'X_t': z_t.X, 'E_t': z_t.E, 'y_t': z_t.y, 'node_mask': node_mask}
+                    extra_data = self.compute_extra_data(noisy_data)
+                    pred = self.forward(noisy_data, extra_data, node_mask)
+                    # pred_X,pred_E = self.map_pred(X_t,E_t,pred,t_float,s_float,node_mask)
+                    loss_X,loss_E = self.ppo_loss(masked_pred_X = pred.X,masked_pred_E=pred.E,pred_y=pred.y,true_X=X_0,true_E=E_0, true_y=y,reweight=advantages)
+                    X_bs,E_bs = len(loss_X),len(loss_E)
+                    pos_loss += (loss_X[loss_X>=0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E>=0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    neg_loss += (loss_X[loss_X<0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E<0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    loss = loss_X.mean() + self.lambda_train[0] * loss_E.mean()
+                    loss = loss/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    # print("train loss", loss)
+                    self.manual_backward(loss)
+                    total_loss+= loss.detach().cpu().numpy().item()
+                if batch_idx%self.cfg.general.step_freq==self.cfg.general.step_freq-1:
+                    self.clip_gradients(opt, gradient_clip_val=1.0, gradient_clip_algorithm="norm")
+                    opt.step()
+                    opt.zero_grad()
+            logfile = self.home_prefix+"profile_log_3.log"
+            logf = open(logfile,"a+")
+            time_cost = time.time()-start_time
+            write_dict = {
+            "lr":self.cfg.train.lr,
+            "dataset":self.cfg.dataset.name,
+            "batch_size":self.cfg.train.batch_size,
+            "train_method": self.cfg.general.train_method,
+            "sampleloop":self.cfg.general.sampleloop,
+            "seed":self.cfg.general.seed,
+            "WD":self.cfg.train.weight_decay,
+            "train_step":self.train_round,
+            "gen_cost":round(gen_cost,6),
+            "train_loss":round(total_loss,6),
+            "pos_loss": round(pos_loss,6),
+            "neg_loss":round(neg_loss,6),
+            "pos_num":pos_num,
+            "neg_num":neg_num,
+            "pos_over":pos_over,
+            "neg_over":neg_over,
+            "time_cost":round(time_cost,6),
+            "loop_idx":loop_count,
+            "SR":self.cfg.general.ppo_sr,
+            "step_freq":self.cfg.general.step_freq,
+            "innerloop":self.cfg.general.innerloop,
+            "partial": self.cfg.general.partial,
+            "fix":self.cfg.general.fix
+            }
+            if self.cfg.dataset.name in ["zinc","moses"]:
+                write_dict["target_prop"]=self.cfg.general.target_prop
+                write_dict["discrete"]=self.cfg.general.discrete
+                write_dict["thres"]=self.cfg.general.thres
+            # print(write_dict)
+            line = json.dumps(write_dict)+"\n"
+            logf.write(line)
+            logf.close()
+            # logf.close()
+        self.train_round+=1
+    
+    def train_step_mcddpo(self,data,i):
+        #sampling
+        # test_k1 = "model.tf_layers.0.self_attn.q.weight"
+        # test_k2 = "model.mlp_in_X.0.weight"
+        # for name,param in self.named_parameters():
+        #     if name==test_k1:
+        #         print(test_k1,param)
+        #     if name==test_k2:
+        #         print(test_k2,param)
+        opt = self.optimizers()
+        bs = self.cfg.train.batch_size
+        sample_list = []
+        avgrewards = 0
+        all_rewards = []
+        gen_start = time.time()
+        for _ in range(self.cfg.general.sampleloop):
+            X_traj,E_traj,node_mask,rewards,rewardsmean = self.sample_batch_mcppo(bs)
+            # print(rewards)
+            avgrewards+=rewardsmean
+            all_rewards+=(rewards.tolist())
+            X_now,E_now = X_traj[:-1],E_traj[:-1]
+            X_prev,E_prev = X_traj[1:],E_traj[1:]
+            time_step = torch.Tensor([self.T-x for x in range(self.T)]).repeat(bs,1)
+            #(T,bs)
+            time_step = time_step.permute(1,0)
+            # shuffle along time
+            for idx in range(bs):
+                perm = torch.randperm(self.T)
+                X_now[:,idx,:,:],E_now[:,idx,:,:,:] = X_now[perm,idx,:,:],E_now[perm,idx,:,:,:]
+                X_prev[:,idx,:,:],E_prev[:,idx,:,:,:] = X_prev[perm,idx,:,:],E_prev[perm,idx,:,:,:]
+                time_step[:,idx] = time_step[perm,idx]
+            sample_list.append((X_now[:,:bs,:,:],E_now[:,:bs,:,:,:],X_prev[:,:bs,:,:],E_prev[:,:bs,:,:,:],time_step[:,:bs],node_mask[:bs],rewards[:bs]))
+        gen_cost = time.time()-gen_start
+        all_rewards = np.array(all_rewards)
+        self.r_avg = all_rewards[all_rewards!=-1].mean()
+        self.r_std = all_rewards[all_rewards!=-1].std()+1e-8
+        # else:
+        #     self.r_avg = 0.8*self.r_avg+0.2*all_rewards.mean()
+        #     self.r_std = 0.8*self.r_std+0.2*(all_rewards.std()+1e-8)
+        # print(all_rewards[all_rewards!=-1].mean())
+        self.write_reward(self.r_avg,self.r_std)
+        logfile = self.home_prefix+"profile_log3.log"
+        logf = open(logfile,"a+")
+        for loop_count in range(self.cfg.general.innerloop):
+            opt.zero_grad()
+            start_time = time.time()
+            total_loss = 0
+            pos_loss = 0
+            neg_loss = 0
+            pos_num = 0
+            neg_num = 0
+            pos_over = 0
+            neg_over = 0
+            for batch_idx in range(self.cfg.general.sampleloop):
+                X_now,E_now,X_prev,E_prev,time_step,node_mask,rewards = sample_list[batch_idx]
+                rewards_mask = rewards==-1
+                pos_num += (rewards>0).sum().detach().cpu().numpy().item()
+                neg_num += (rewards<=0).sum().detach().cpu().numpy().item()
+                if self.cfg.general.minibatchnorm:
+                    rewardsmean = (rewards[~rewards_mask]).mean()
+                    rewardsstd = (rewards[~rewards_mask]).std()+1e-8
+                else:
+                    rewardsmean = self.r_avg
+                    rewardsstd = self.r_std
+                rewards = (rewards-rewardsmean)/rewardsstd
+                pos_over += (rewards[~rewards_mask]>5).sum().detach().cpu().numpy().item()
+                neg_over += (rewards[~rewards_mask]<-5).sum().detach().cpu().numpy().item()
+                advantages = torch.clamp(rewards, -5, 5).cuda()
+                advantages[rewards_mask]=0
+                #accumulation on T steps
+                sample_idx = random.sample(list(range(self.T)),int(self.T*self.cfg.general.ppo_sr))
+                for idx in sample_idx:
+                    X_t,E_t = X_now[idx],E_now[idx]
+                    t_int = time_step[idx].reshape(bs,1)
+                    y=torch.zeros(bs, 0)
+                    t_float = t_int/self.T
+                    s_float = (t_int-1)/self.T
+                    t_float,s_float = t_float.cuda(),s_float.cuda()
+                    X_t,E_t,y = X_t.cuda(),E_t.cuda(),y.cuda()
+                    z_t = utils.PlaceHolder(X=X_t, E=E_t, y=y).type_as(X_t).mask(node_mask)
+                    noisy_data = {'t': t_float, 'X_t': z_t.X, 'E_t': z_t.E, 'y_t': z_t.y, 'node_mask': node_mask}
+                    extra_data = self.compute_extra_data(noisy_data)
+                    pred = self.forward(noisy_data, extra_data, node_mask)
+                    pred_X,pred_E = self.map_pred(X_t,E_t,pred,t_float,s_float,node_mask)
+
+                    X_t,E_t = X_prev[idx],E_prev[idx]
+                    X_t,E_t = X_t.cuda(),E_t.cuda()
+                    loss_X,loss_E = self.nll_loss(masked_pred_X = pred_X,masked_pred_E=pred_E,pred_y=pred.y,true_X=X_t,true_E=E_t, true_y=y,reweight=advantages)
+                    # print(loss_X,loss_E)
+                    X_bs,E_bs = len(loss_X),len(loss_E)
+                    pos_loss += (loss_X[loss_X>=0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E>=0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    neg_loss += (loss_X[loss_X<0].sum()/X_bs+self.lambda_train[0]*loss_E[loss_E<0].sum()/E_bs).detach().cpu().numpy().item()/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    loss = loss_X.mean() + self.lambda_train[0] * loss_E.mean()
+                    loss = loss/(int(self.T*self.cfg.general.ppo_sr)*self.cfg.general.step_freq)
+                    # print("train loss", loss)
+                    self.manual_backward(loss)
+                    total_loss+= loss.detach().cpu().numpy().item()
+                if batch_idx%self.cfg.general.step_freq==self.cfg.general.step_freq-1:
+                    self.clip_gradients(opt, gradient_clip_val=1.0, gradient_clip_algorithm="norm")
+                    opt.step()
+                    opt.zero_grad()
+            time_cost = time.time()-start_time
+            write_dict = {
+            "lr":self.cfg.train.lr,
+            "dataset":self.cfg.dataset.name,
+            "batch_size":self.cfg.train.batch_size,
+            "sampleloop":self.cfg.general.sampleloop,
+            "seed":self.cfg.general.seed,
+            "WD":self.cfg.train.weight_decay,
+            "train_step":self.train_round,
+            "gen_cost":round(gen_cost,6),
+            "train_loss":round(total_loss,6),
+            "pos_loss": round(pos_loss,6),
+            "neg_loss":round(neg_loss,6),
+            "pos_num":pos_num,
+            "neg_num":neg_num,
+            "pos_over":pos_over,
+            "neg_over":neg_over,
+            "time_cost":round(time_cost,6),
+            "loop_idx":loop_count,
+            "SR":self.cfg.general.ppo_sr,
+            "step_freq":self.cfg.general.step_freq,
+            "innerloop":self.cfg.general.innerloop,
+            "partial": self.cfg.general.partial,
+            "fix":self.cfg.general.fix
+            }
+            if self.cfg.dataset.name in ["zinc","moses"]:
+                write_dict["target_prop"]=self.cfg.general.target_prop
+                write_dict["discrete"]=self.cfg.general.discrete
+                write_dict["thres"]=self.cfg.general.thres
+            # print(write_dict)
+            line = json.dumps(write_dict)+"\n"
+            logf.write(line)
+        self.train_round+=1
+
     def map_pred(self,X_t,E_t,pred,t,s,node_mask):
         bs, n, dxs = X_t.shape
         beta_t = self.noise_schedule(t_normalized=t)  # (bs, 1)
@@ -2441,6 +2712,122 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         advantages = torch.Tensor(reward_list)
         self.model.train()
         return torch.stack(X_traj),torch.stack(E_traj),node_mask,advantages,validmean
+
+    @torch.no_grad()
+    def sample_batch_mcppo(self, batch_size: int):
+        """
+        :param batch_id: int
+        :param batch_size: int
+        :param num_nodes: int, <int>tensor (batch_size) (optional) for specifying number of nodes
+        :param save_final: int: number of predictions to save to file
+        :param keep_chain: int: number of chains to save to file
+        :param keep_chain_steps: number of timesteps to save for each chain
+        :return: molecule_list. Each element of this list is a tuple (atom_types, charges, positions)
+        """
+        self.model.eval()
+        n_nodes = self.node_dist.sample_n(batch_size, self.device)
+        n_max = torch.max(n_nodes).item()
+        # Build the masks
+        arange = torch.arange(n_max, device=self.device).unsqueeze(
+            0).expand(batch_size, -1)
+        node_mask = arange < n_nodes.unsqueeze(1)
+        X_traj = []
+        E_traj = []
+        # TODO: how to move node_mask on the right device in the multi-gpu case?
+        # TODO: everything else depends on its device
+        # Sample noise  -- z has size (n_samples, n_nodes, n_features)
+        z_T = diffusion_utils.sample_discrete_feature_noise(
+            limit_dist=self.limit_dist, node_mask=node_mask)
+        X, E, y = z_T.X, z_T.E, z_T.y
+        assert (E == torch.transpose(E, 1, 2)).all()
+        X_traj.append(X.cpu())
+        E_traj.append(E.cpu())
+        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        for s_int in reversed(range(0, self.T)):
+            s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
+            t_array = s_array + 1
+            s_norm = s_array / self.T
+            t_norm = t_array / self.T
+
+            # Sample z_s
+            sampled_s, discrete_sampled_s = self.sample_p_zs_given_zt(
+                s_norm, t_norm, X, E, y, node_mask)
+            X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
+            X_traj.append(X.cpu())
+            E_traj.append(E.cpu())
+        # Compute punish
+
+        punish_list = np.zeros(batch_size)
+        ec_list = np.zeros(batch_size)
+
+        for s_int in range(self.T):
+            # ec_s = torch.abs(E_traj[i] - E_traj[-1]).sum(dim=(-1, -2, -3)).numpy()
+            ec_s = torch.abs(E_traj[i] - E_traj[i + 1]).sum(dim=(-1, -2, -3)).numpy()
+            ec_list = ec_list + ec_s
+            punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
+            punish_list = punish_list + punish_s
+        # punish_list = [TB_MC * p / self.punish_max for p in punish_list]
+
+        # Compute reward
+        s0 = sampled_s.mask(node_mask, collapse=True)
+        X, E, y = s0.X, s0.E, s0.y
+        molecule_list = []
+        for i in range(batch_size):
+            n = n_nodes[i]
+            atom_types = X[i, :n].cpu()
+            edge_types = E[i, :n, :n].cpu()
+            molecule_list.append([atom_types, edge_types])
+        if "ogbg" in self.cfg.dataset.name:
+            valid_list,uniq,freq_list,reward_list = compute_molecular_metrics_list(molecule_list,self.dataset_info)
+            for idx,freq in enumerate(freq_list):
+                if freq>0:
+                    reward_list[idx] = reward_list[idx]/freq
+            validmean = np.array(valid_list).mean().item()
+        elif self.cfg.dataset.name in ["zinc","moses"]:
+            if self.train_fps is None:
+                assert self.train_smiles is not None
+                train_mols = [Chem.MolFromSmiles(smi) for smi in self.train_smiles]
+                self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
+            smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(molecule_list,self.dataset_info)
+            valid_idx = [x for x in range(len(smiles))if smiles[x] is not None]
+            valid_list = [x for x in smiles if x is not None]
+            if len(valid_list)>0:
+                if self.cfg.general.discrete:
+                    if self.cfg.dataset.name == "moses":
+                        valid_score_list = gen_score_disc_listmose(self.cfg.general.target_prop,valid_list,self.cfg.general.thres,self.train_fps)
+                    else:
+                        valid_score_list = gen_score_disc_list(self.cfg.general.target_prop,valid_list,self.cfg.general.thres,self.train_fps,self.cfg.general.weight_list)
+                else:
+                    valid_score_list = gen_score_list(self.cfg.general.target_prop,valid_list,self.train_fps)
+            else:
+                valid_score_list = []
+            reward_list = [0]*len(smiles)
+            # print("valid score list",valid_score_list)
+            for idx,score in enumerate(valid_score_list):
+                reward_list[valid_idx[idx]]=score
+            reward_list = np.array(reward_list)
+            validmean = (reward_list[reward_list!=-1]).mean().item()
+            reward_list = reward_list.tolist()
+            for idx,value in enumerate(freq_list):
+                if value>0 and reward_list[idx]!=-1:
+                    reward_list[idx] = reward_list[idx]/value
+        elif self.cfg.dataset.name in ["planar","sbm"] and "nodes" not in self.cfg.dataset:
+            if self.train_graphs is None:
+                self.train_graphs = loader_to_nx(self.trainer.datamodule.train_dataloader())
+            reward_list = graph_rewards(molecule_list,self.train_graphs,self.cfg.dataset.name)
+            validmean = np.array(reward_list).mean().item()
+        elif self.cfg.dataset.name == "toytree":
+            reward_list = tree_rewards(molecule_list)
+            validmean = np.array(reward_list + punish_list).mean().item() 
+        elif "nodes" in self.cfg.dataset:
+            reward_list = toy_rewards(molecule_list)
+            validmean = np.array(reward_list + punish_list).mean().item()
+        else:
+            print("unexpected datset option")
+        advantages = torch.Tensor(reward_list)
+        self.model.train()
+        return torch.stack(X_traj),torch.stack(E_traj),node_mask,advantages,validmean
+
     @torch.no_grad()
     def sample_batch_isppo(self, batch_size: int):
         """
