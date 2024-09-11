@@ -41,7 +41,7 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 0.03
+TB_MC = 1
 
 def to_sparse_batch(x, adj, mask=None):
     # transform x (B x N x D), adj (B x N x N), mask (B x N), here N is N_max
@@ -199,6 +199,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.ckpt = None
         if cfg.general.train_method in ["ddpo","gdpo","isddpo","isgdpo","mcddpo","mcgdpo"]:
             self.automatic_optimization=False
+
+        self.ec_max = 0.
 
     def training_step(self, data, i):
         # method = self.cfg.general.train_method
@@ -2521,6 +2523,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         node_mask = arange < n_nodes.unsqueeze(1)
         X_traj = []
         E_traj = []
+        masked_X_traj = []
+        masked_E_traj = []
         # TODO: how to move node_mask on the right device in the multi-gpu case?
         # TODO: everything else depends on its device
         # Sample noise  -- z has size (n_samples, n_nodes, n_features)
@@ -2545,21 +2549,32 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
             X_traj.append(X.cpu())
             E_traj.append(E.cpu())
+
+            st = sampled_s.mask(node_mask, collapse=True)
+            masked_X, masked_E, masked_y = st.X, st.E, st.y
+            masked_E_traj.append(masked_E.cpu())
+            masked_X_traj.append(masked_X.cpu())
         # Compute punish
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
 
-        for s_int in range(self.T):
+        for s_int in range(self.T - 1):
             # ec_s = torch.abs(E_traj[i] - E_traj[-1]).sum(dim=(-1, -2, -3)).numpy()
-            ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
+            
             ec_list = ec_list + ec_s
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        punish_list = TB_MC * punish_list
+        # self.ec_max = max(self.ec_max, max(ec_list))
+        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        punish_max_value = max(punish_list)
+        punish_list = (TB_MC / punish_max_value) * punish_list
+
 
         # Sample
-        sampled_s = sampled_s.mask(node_mask, collapse=True)
+        sampled_s = st
         X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
 
         # Prepare the chain for saving
@@ -2761,6 +2776,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         node_mask = arange < n_nodes.unsqueeze(1)
         X_traj = []
         E_traj = []
+        masked_E_traj = []
+        masked_X_traj = []
+
         # TODO: how to move node_mask on the right device in the multi-gpu case?
         # TODO: everything else depends on its device
         # Sample noise  -- z has size (n_samples, n_nodes, n_features)
@@ -2783,21 +2801,31 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
             X_traj.append(X.cpu())
             E_traj.append(E.cpu())
+
+            st = sampled_s.mask(node_mask, collapse=True)
+            masked_X, masked_E, masked_y = st.X, st.E, st.y
+
+            masked_E_traj.append(masked_E.cpu())
+            masked_X_traj.append(masked_X.cpu())
         # Compute punish
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
 
-        for s_int in range(self.T):
+        for s_int in range(self.T - 1):
             # ec_s = torch.abs(E_traj[i] - E_traj[-1]).sum(dim=(-1, -2, -3)).numpy()
-            ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
             ec_list = ec_list + ec_s
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        punish_list = TB_MC * punish_list
+        # self.ec_max = max(self.ec_max, max(ec_list))
+        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        punish_max_value = max(punish_list)
+        punish_list = (TB_MC / punish_max_value) * punish_list
 
         # Compute reward
-        s0 = sampled_s.mask(node_mask, collapse=True)
+        s0 = st
         X, E, y = s0.X, s0.E, s0.y
         molecule_list = []
         for i in range(batch_size):
