@@ -1513,7 +1513,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 self.validation_time += 1
             elif "nodes" in self.cfg.dataset:
                 res = toy_rewards(samples)
-                logfile = self.home_prefix+"evaluation_toy_n{}.log".format(self.cfg.dataset.nodes)
+                logfile = self.home_prefix+"evaluation_toy_n{}_tb{}.log".format(self.cfg.dataset.nodes,TB_MC)
                 avgreward = np.array(res).mean()
                 avgpunish = np.array(punishes).mean()
                 logf = open(logfile,"a+")
