@@ -41,7 +41,7 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 1
+TB_MC = 0.03
 
 def to_sparse_batch(x, adj, mask=None):
     # transform x (B x N x D), adj (B x N x N), mask (B x N), here N is N_max
@@ -2556,7 +2556,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             ec_list = ec_list + ec_s
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        punish_list = [TB_MC * p / max(punish_list) for p in punish_list]
+        punish_list = TB_MC * punish_list
 
         # Sample
         sampled_s = sampled_s.mask(node_mask, collapse=True)
@@ -2794,7 +2794,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             ec_list = ec_list + ec_s
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        punish_list = [TB_MC * p / max(punish_list) for p in punish_list]
+        punish_list = TB_MC * punish_list
 
         # Compute reward
         s0 = sampled_s.mask(node_mask, collapse=True)
@@ -2852,7 +2852,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             validmean = np.array(reward_list + punish_list).mean().item()
         else:
             print("unexpected datset option")
-        advantages = torch.Tensor(reward_list)
+        advantages = torch.Tensor(reward_list + punish_list)
         self.model.train()
         return torch.stack(X_traj),torch.stack(E_traj),node_mask,advantages,validmean
 
