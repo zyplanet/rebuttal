@@ -2,7 +2,7 @@
 
 train_method="mcddpo"
 val_method="ppo"
-lr=1e-5
+lr=5e-4
 innerloop=1
 sampleloop=1
 step_freq=1

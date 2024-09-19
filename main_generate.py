@@ -84,6 +84,7 @@ def get_resume_adaptive(cfg, model_kwargs):
     resume_path = os.path.join(root_dir, cfg.general.resume)
 
     if cfg.model.type == 'discrete':
+        print("Here:",resume_path)
         model = DiscreteDenoisingDiffusion.load_from_checkpoint(
             resume_path, cfg=cfg,**model_kwargs)
     else:

@@ -62,6 +62,15 @@ def gen_data(num,n,min_ch,max_ch,cliq_size,height,rewrite_step,prob):
     save_name = "data/num{}_n{}_{}-{}_cliq{}_h{}_r{}_p{}.pth".format(num,n,min_ch,max_ch,cliq_size,height,rewrite_step,prob)
     torch.save(adj_list,save_name)
 
+def gen_pure_tree_data(num,n,min_ch,max_ch,rewrite_step,prob):
+    adj_list = []
+    for i in range(num):
+        base = gen_base_tree(n,min_ch,max_ch)
+        noisy = rewrite(base,rewrite_step,prob)
+        adj_list.append(nx.to_numpy_array(noisy))
+    save_name = "data/tree/num{}_n{}_{}-{}_r{}_p{}.pth".format(num,n,min_ch,max_ch,rewrite_step,prob)
+    torch.save(adj_list,save_name)
+
 if __name__=="__main__":
     num = 400
     n = 20
@@ -71,4 +80,5 @@ if __name__=="__main__":
     height = "high"
     rewrite_step = 0
     prob = 0.5
-    gen_data(num,n,min_ch,max_ch,cliq_size,height,rewrite_step,prob)
+    gen_pure_tree_data(num,n,min_ch,max_ch,rewrite_step,prob)
+    # gen_data(num,n,min_ch,max_ch,cliq_size,height,rewrite_step,prob)

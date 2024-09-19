@@ -41,7 +41,8 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 1
+TB_MC = 3
+IM_MC = 1.0
 
 def to_sparse_batch(x, adj, mask=None):
     # transform x (B x N x D), adj (B x N x N), mask (B x N), here N is N_max
@@ -1384,6 +1385,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             chains_left_to_save = self.cfg.general.final_model_chains_to_save
             samples = []
             punishes = []
+            imrewards = []
             id = 0
             while samples_left_to_generate > 0:
                 print(f'Samples left to generate: {samples_left_to_generate}/'
@@ -1392,10 +1394,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 to_generate = min(samples_left_to_generate, bs)
                 to_save = min(samples_left_to_save, bs)
                 chains_save = min(chains_left_to_save, bs)
-                samples_batch, punish_batch = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+                samples_batch, punish_batch, imreward_batch = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
                                                 keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
                 samples.extend(samples_batch)
                 punishes.extend(punish_batch)
+                imrewards.extend(imreward_batch)
                 id += to_generate
                 samples_left_to_save -= to_save
                 samples_left_to_generate -= to_generate
@@ -1518,6 +1521,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 logfile = self.home_prefix+"evaluation_toy_n{}_tb{}.log".format(self.cfg.dataset.nodes,TB_MC)
                 avgreward = np.array(res).mean()
                 avgpunish = np.array(punishes).mean()
+                avgimreward = np.array(imrewards).mean()
                 logf = open(logfile,"a+")
                 avgscore = round(100*np.array(res).sum()/len(res),4)
                 write_dict = {
@@ -1534,6 +1538,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     "train_method":self.cfg.general.train_method,
                     "innerloop":self.cfg.general.innerloop,
                     "avgpunish":round(avgpunish,6),
+                    "avgimreward":round(avgimreward,6),
                     "avgreward":round(avgreward,6)
                 }
                 print(write_dict)
@@ -1545,6 +1550,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             elif self.cfg.dataset.name=="toytree":
                 res = tree_rewards(samples)
                 avgpunish = np.array(punishes).mean()
+                avgimreward = np.array(imrewards).mean()
                 datapath = self.cfg.general.data_path
                 savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
                 logfile = self.home_prefix+"evaluation_tree_{}_{}.log".format(savedir,self.cfg.general.train_method)
@@ -1565,6 +1571,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     "train_method":self.cfg.general.train_method,
                     "innerloop":self.cfg.general.innerloop,
                     "avgpunish":round(avgpunish,6),
+                    "avgimreward":round(avgimreward,6),
                     "avgreward":round(avgreward,6)
                 }
                 print(write_dict)
@@ -1611,7 +1618,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     to_generate = min(samples_left_to_generate, bs)
                     to_save = min(samples_left_to_save, bs)
                     chains_save = min(chains_left_to_save, bs)
-                    samples_batch, _ = self.sample_batch(batch_id=ident, batch_size=to_generate, num_nodes=None,
+                    samples_batch, _, __ = self.sample_batch(batch_id=ident, batch_size=to_generate, num_nodes=None,
                                                     save_final=to_save,
                                                     keep_chain=chains_save,
                                                     number_chain_steps=self.number_chain_steps)
@@ -1776,7 +1783,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             to_generate = min(samples_left_to_generate, bs)
             to_save = min(samples_left_to_save, bs)
             chains_save = min(chains_left_to_save, bs)
-            samples_batch, _ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+            samples_batch, _, __ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
                                              keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
             samples.extend(samples_batch)
             id += to_generate
@@ -1849,7 +1856,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             to_generate = min(samples_left_to_generate, bs)
             to_save = min(samples_left_to_save, bs)
             chains_save = min(chains_left_to_save, bs)
-            samples_batch, _ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+            samples_batch, _, __ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
                                              keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
             samples.extend(samples_batch)
             id += to_generate
@@ -1923,7 +1930,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             to_generate = min(samples_left_to_generate, bs)
             to_save = min(samples_left_to_save, bs)
             chains_save = min(chains_left_to_save, bs)
-            samples_batch, _ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+            samples_batch, _, __ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
                                             keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
             samples.extend(samples_batch)
             id += to_generate
@@ -2051,7 +2058,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             to_generate = min(samples_left_to_generate, bs)
             to_save = min(samples_left_to_save, bs)
             chains_save = min(chains_left_to_save, bs)
-            samples_batch, _ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
+            samples_batch, _, __ = self.sample_batch(id, to_generate, num_nodes=None, save_final=to_save,
                                              keep_chain=chains_save, number_chain_steps=self.number_chain_steps)
             samples.extend(samples_batch)
             id += to_generate
@@ -2558,20 +2565,40 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
+        imreward_list = np.zeros(batch_size)
 
         for s_int in range(self.T - 1):
             # ec_s = torch.abs(E_traj[i] - E_traj[-1]).sum(dim=(-1, -2, -3)).numpy()
             # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            # ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[-1]).sum( dim = (-1, -2) ).numpy()
             ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
-            
+
             ec_list = ec_list + ec_s
+            
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        # self.ec_max = max(self.ec_max, max(ec_list))
-        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
-        punish_max_value = max(punish_list)
-        punish_list = (TB_MC / punish_max_value) * punish_list
+            
+            molecule_list_s = []
+            for i in range(batch_size):
+                n = n_nodes[i]
+                atom_types_s = masked_X_traj[s_int][i, :n].cpu()
+                edge_types_s = masked_E_traj[s_int][i, :n, :n].cpu()
+                molecule_list_s.append([atom_types_s, edge_types_s])
+            
+            if self.cfg.dataset.name == "toytree":
+                imreward_list_s = tree_rewards(molecule_list_s)
+            elif "nodes" in self.cfg.dataset:
+                imreward_list_s = toy_rewards(molecule_list_s)
+            imreward_list = imreward_list + imreward_list_s
 
+        self.ec_max = max(self.ec_max, max(ec_list))
+        punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        
+        # punish_max_value = max(punish_list)
+        # punish_list = (TB_MC / punish_max_value) * punish_list
+        
+        imreward_max_value = max(imreward_list)
+        imreward_list = (IM_MC / imreward_max_value) * imreward_list
 
         # Sample
         sampled_s = st
@@ -2586,7 +2613,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             edge_types = E[i, :n, :n].cpu()
             molecule_list.append([atom_types, edge_types])
 
-        return molecule_list, punish_list
+        return molecule_list, punish_list, imreward_list
     @torch.no_grad()
     def sample_batch_seed(self, batch_id: int, batch_size: int, keep_chain: int, number_chain_steps: int,
                      save_final: int, num_nodes=None, seed=None):
@@ -2811,18 +2838,36 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
+        imreward_list = np.zeros(batch_size)
 
         for s_int in range(self.T - 1):
             # ec_s = torch.abs(E_traj[i] - E_traj[-1]).sum(dim=(-1, -2, -3)).numpy()
             # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
+            # ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[-1]).sum( dim = (-1, -2) ).numpy()
             ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
             ec_list = ec_list + ec_s
             punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
             punish_list = punish_list + punish_s
-        # self.ec_max = max(self.ec_max, max(ec_list))
-        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
-        punish_max_value = max(punish_list)
-        punish_list = (TB_MC / punish_max_value) * punish_list
+
+            molecule_list_s = []
+            for i in range(batch_size):
+                n = n_nodes[i]
+                atom_types_s = masked_X_traj[s_int][i, :n].cpu()
+                edge_types_s = masked_E_traj[s_int][i, :n, :n].cpu()
+                molecule_list_s.append([atom_types_s, edge_types_s])
+            
+            if self.cfg.dataset.name == "toytree":
+                imreward_list_s = tree_rewards(molecule_list_s)
+            elif "nodes" in self.cfg.dataset:
+                imreward_list_s = toy_rewards(molecule_list_s)
+            imreward_list = imreward_list + imreward_list_s
+
+        self.ec_max = max(self.ec_max, max(ec_list))
+        punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        # punish_max_value = max(punish_list)
+        # punish_list = (TB_MC / punish_max_value) * punish_list
+        imreward_max_value = max(imreward_list)
+        imreward_list = (IM_MC / imreward_max_value) * imreward_list
 
         # Compute reward
         s0 = st

@@ -594,5 +594,6 @@ def gen_tree_reward_list(generated_graphs,size=4):
         networkx_graphs.append(nx_graph)
     score_list = []
     for nx_graph in networkx_graphs:
-        score_list.append(tree_reward(nx_graph,size))
+        # score_list.append(tree_reward(nx_graph,size))
+        score_list.append(1 if nx.is_tree(nx_graph) else 0)
     return np.array(score_list)

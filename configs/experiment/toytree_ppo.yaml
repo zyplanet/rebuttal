@@ -3,8 +3,8 @@ general:
     name : 'toytree'
     gpus : 1
     wandb: 'disabled'
-    resume: "/root/autodl-tmp/rebuttal/multirun/2024-08-04/01-59-42/0/checkpoints/num400_n20_1-3_cliq4_hmedium_r0/epoch=31199.ckpt"
-    data_path: "/root/autodl-tmp/rebuttal/data/num400_n20_1-3_cliq4_hmedium_r0_p0.5.pth"
+    resume: "/root/autodl-tmp/rebuttal/multirun/2024-09-18/21-55-55/0/checkpoints/num400_n20_1-3_r0/epoch=49399.ckpt"
+    data_path: "/root/autodl-tmp/rebuttal/data/tree/num400_n20_1-3_r0_p0.5.pth"
     test_only: null
     check_val_every_n_epochs: 2
     sample_every_val: 1
