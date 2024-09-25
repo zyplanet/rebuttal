@@ -41,7 +41,7 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 3
+TB_MC = 1
 IM_MC = 1.0
 
 def to_sparse_batch(x, adj, mask=None):
@@ -1518,7 +1518,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 self.validation_time += 1
             elif "nodes" in self.cfg.dataset:
                 res = toy_rewards(samples)
-                logfile = self.home_prefix+"evaluation_toy_n{}_tb{}.log".format(self.cfg.dataset.nodes,TB_MC)
+                logfile = self.home_prefix+"evaluation_toy_n{}_tb{}_2.log".format(self.cfg.dataset.nodes,TB_MC)
                 avgreward = np.array(res).mean()
                 avgpunish = np.array(punishes).mean()
                 avgimreward = np.array(imrewards).mean()
@@ -2591,11 +2591,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 imreward_list_s = toy_rewards(molecule_list_s)
             imreward_list = imreward_list + imreward_list_s
 
-        self.ec_max = max(self.ec_max, max(ec_list))
-        punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        # self.ec_max = max(self.ec_max, max(ec_list))
+        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
         
-        # punish_max_value = max(punish_list)
-        # punish_list = (TB_MC / punish_max_value) * punish_list
+        punish_max_value = max(punish_list)
+        punish_list = (TB_MC / punish_max_value) * punish_list
         
         imreward_max_value = max(imreward_list)
         imreward_list = (IM_MC / imreward_max_value) * imreward_list
@@ -2862,10 +2862,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 imreward_list_s = toy_rewards(molecule_list_s)
             imreward_list = imreward_list + imreward_list_s
 
-        self.ec_max = max(self.ec_max, max(ec_list))
-        punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
-        # punish_max_value = max(punish_list)
-        # punish_list = (TB_MC / punish_max_value) * punish_list
+        # self.ec_max = max(self.ec_max, max(ec_list))
+        # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
+        punish_max_value = max(punish_list)
+        punish_list = (TB_MC / punish_max_value) * punish_list
         imreward_max_value = max(imreward_list)
         imreward_list = (IM_MC / imreward_max_value) * imreward_list
 
