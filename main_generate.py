@@ -236,14 +236,22 @@ def main(cfg: DictConfig):
                 prefix = cfg.general.target_prop+"_"+str(cfg.general.seed)
             else:
                 prefix = str(cfg.general.seed)
-            datapath = cfg.general.data_path
-            savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
-            checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{savedir}",
+            if cfg.dataset.name in ["zinc","moses"]:
+                checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{cfg.dataset.name}",
                                                 filename=prefix+"_"+'{epoch}-{val/epoch_score:.4f}',
                                                 monitor="val/epoch_score",
                                                 save_top_k=topk,
                                                 mode='max',
                                                 every_n_train_steps=cfg.general.val_check_interval)
+            else:
+                datapath = cfg.general.data_path
+                savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]
+                checkpoint_callback = ModelCheckpoint(dirpath=f"checkpoints/{savedir}",
+                                                    filename=prefix+"_"+'{epoch}-{val/epoch_score:.4f}',
+                                                    monitor="val/epoch_score",
+                                                    save_top_k=topk,
+                                                    mode='max',
+                                                    every_n_train_steps=cfg.general.val_check_interval)
         else:
             datapath = cfg.general.data_path
             savedir = datapath.split("/")[-1].split("_p0.5.pth")[0]

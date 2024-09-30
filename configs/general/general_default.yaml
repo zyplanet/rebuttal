@@ -5,7 +5,6 @@ wandb: 'disabled'             # online | offline | disabled
 gpus: 1                     # Multi-gpu is not implemented on this branch
 device: 0
 seed: 666
-data_path: "/root/autodl-tmp/rebuttal/data/num400_n20_1-3_cliq4_hmedium_r0_p0.5.pth"
 resume: null
 test_only: null
 check_val_every_n_epochs: 1
