@@ -7,7 +7,7 @@ innerloop=1
 sampleloop=1
 step_freq=1
 fix=0.
-nodes=32
+nodes=16
 device=0
 # for run_times in `seq 1 1`:
 # do

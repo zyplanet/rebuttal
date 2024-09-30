@@ -185,7 +185,7 @@ def evaluate(protein, smiles, mols=None,train_fps=None):
     
     top_ds = df.iloc[:num_top5][protein].mean(), df.iloc[:num_top5][protein].std()
     hit = len(df[df[protein] > hit_thr]) / (num_mols+1e-6)
-    
+
     return {'validity': validity, 'uniqueness': uniqueness,
             'novelty': novelty, 'top_ds': top_ds, 'hit': hit,"avgscore":avgscore,"avgds":avgds,"avgqed":avgqed,"avgsa":avgsa}
 

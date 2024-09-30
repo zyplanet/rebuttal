@@ -21,7 +21,7 @@ general:
 train:
     optimizer: adamw
     n_epochs: 300
-    batch_size: 256
+    batch_size: 64
     save_model: True
     lr: 2e-4
     num_workers: 4

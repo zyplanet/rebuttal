@@ -41,7 +41,7 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 1
+TB_MC = 0.3
 IM_MC = 1.0
 
 def to_sparse_batch(x, adj, mask=None):
@@ -1380,7 +1380,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             elif self.cfg.dataset.name=="toytree":
                 samples_left_to_generate = 256
             else:
-                samples_left_to_generate = 256
+                samples_left_to_generate = 64
             samples_left_to_save = self.cfg.general.final_model_samples_to_save
             chains_left_to_save = self.cfg.general.final_model_chains_to_save
             samples = []
@@ -1415,7 +1415,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 else:
                     result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
                 if self.cfg.dataset.name == "zinc":
-                    logfile = self.home_prefix+"evaluation_dictzinc.log"
+                    logfile = self.home_prefix+"evaluation_dictzinc_tb{}_{}_2.log".format(TB_MC,self.cfg.general.train_method)
                 elif self.cfg.dataset.name == "moses":
                     logfile = self.home_prefix+"evaluation_dictmoses.log"
                 if test:
@@ -1469,7 +1469,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                         "hit":result["hit"],
                         "avgds": round(result["avgds"],4),
                         "avgqed": round(result["avgqed"],4),
-                        "avgsa": round(result["avgsa"],4)
+                        "avgsa": round(result["avgsa"],4),
                     }
                     write_dict["discrete"]=self.cfg.general.discrete
                     write_dict["thres"]=self.cfg.general.thres
@@ -1901,7 +1901,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         """ Measure likelihood on a test set and compute stability metrics. """
         self.model.eval()
         # samples_left_to_generate = self.cfg.general.final_model_samples_to_generate
-        samples_left_to_generate = 1024
+        samples_left_to_generate =256
         samples_left_to_save = self.cfg.general.final_model_samples_to_save
         chains_left_to_save = self.cfg.general.final_model_chains_to_save
         workdir = os.getcwd()
@@ -1953,7 +1953,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         #             f.write("\n")
         #         f.write("\n")
         # print("Saved.")
-        sperate = 256
+        sperate = 64
         K = len(samples)//sperate
         #train-test base perform
         time_stamp = "{}".format(datetime.now())
@@ -1979,42 +1979,48 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     f.write(smi+"\n")
         f.close()
 
-        # for idx in range(K):
-        #     print("start eval idx {}".format(idx))
-        #     subsamples = samples[idx*sperate:min((idx+1)*sperate,len(samples))]
-        #     print(self.dataset_info)
-        #     smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(subsamples,self.dataset_info)
-        #     valid = [x for x in smiles if x is not None]
-        #     print(self.cfg.dataset.name,"dataset name is ")
-        #     with open(smile_path,"a+") as f:
-        #         for smi in smiles:
-        #             f.write(smi+"\n")
-        #     f.close()
-            # if self.cfg.dataset.name == "moses":
-            #     result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
-            # else:
-            #     result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
-            # logf = open(logfile,"a+")
-            # print(result)
-            # write_dict = {
-            #     "time":time_stamp,
-            #     "dataset":self.cfg.dataset.name,
-            #     "step_freq":self.cfg.general.step_freq,
-            #     "target_prop":self.cfg.general.target_prop,
-            #     "VALID":round(100*valid_r,4),
-            #     "UNIQ":round(100*uniq_r,4),
-            #     "novelty":result["novelty"],
-            #     "top_ds":result["top_ds"],
-            #     "avgscore":result["avgscore"],
-            #     "hit":result["hit"],
-            #     "avgds": round(result["avgds"],4),
-            #     "avgqed": round(result["avgqed"],4),
-            #     "avgsa": round(result["avgsa"],4)
-            # }
-            # smile_path = "sample_smi"
-            # line = json.dumps(write_dict)+"\n"
-            # logf.write(line)
-            # logf.close()
+        for idx in range(K):
+            print("start eval idx {}".format(idx))
+            subsamples = samples[idx*sperate:min((idx+1)*sperate,len(samples))]
+            print(self.dataset_info)
+            smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(subsamples,self.dataset_info)
+            valid = [x for x in smiles if x is not None]
+            print(self.cfg.dataset.name,"dataset name is ")
+            with open(smile_path,"a+") as f:
+                for smi in smiles:
+                    if smi is not None:
+                        f.write(smi+"\n")
+            f.close()
+            if self.train_fps is None:
+                assert self.train_smiles is not None
+                train_mols = [Chem.MolFromSmiles(smi) for smi in self.train_smiles]
+                self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
+            if self.cfg.dataset.name == "moses":
+                result = mose_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+            else:
+                result = prop_evaluate(self.cfg.general.target_prop,valid,None,self.train_fps)
+            
+            logf = open(logfile,"a+")
+            print(result)
+            write_dict = {
+                "time":time_stamp,
+                "dataset":self.cfg.dataset.name,
+                "step_freq":self.cfg.general.step_freq,
+                "target_prop":self.cfg.general.target_prop,
+                "VALID":round(100*valid_r,4),
+                "UNIQ":round(100*uniq_r,4),
+                "novelty":result["novelty"],
+                "top_ds":result["top_ds"],
+                "avgscore":result["avgscore"],
+                "hit":result["hit"],
+                "avgds": round(result["avgds"],4),
+                "avgqed": round(result["avgqed"],4),
+                "avgsa": round(result["avgsa"],4)
+            }
+            smile_path = "sample_smi"
+            line = json.dumps(write_dict)+"\n"
+            logf.write(line)
+            logf.close()
     
     def test_epoch_end_evalgeneral(self, outs) -> None:
         """ Measure likelihood on a test set and compute stability metrics. """
@@ -2565,6 +2571,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
+        vc_list = np.zeros(batch_size)
         imreward_list = np.zeros(batch_size)
 
         for s_int in range(self.T - 1):
@@ -2572,10 +2579,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
             # ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[-1]).sum( dim = (-1, -2) ).numpy()
             ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
-
+            vc_s = torch.abs(masked_X_traj[s_int] - masked_X_traj[s_int + 1]).sum( dim = (-1) ).numpy()
             ec_list = ec_list + ec_s
-            
-            punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
+            vc_list = vc_list + vc_s
+            punish_s = [np.power(GAMMA_MC, ec + vc) for ec, vc in zip(ec_s, vc_s)]
             punish_list = punish_list + punish_s
             
             molecule_list_s = []
@@ -2585,11 +2592,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 edge_types_s = masked_E_traj[s_int][i, :n, :n].cpu()
                 molecule_list_s.append([atom_types_s, edge_types_s])
             
-            if self.cfg.dataset.name == "toytree":
-                imreward_list_s = tree_rewards(molecule_list_s)
-            elif "nodes" in self.cfg.dataset:
-                imreward_list_s = toy_rewards(molecule_list_s)
-            imreward_list = imreward_list + imreward_list_s
+            # if self.cfg.dataset.name == "toytree":
+            #     imreward_list_s = tree_rewards(molecule_list_s)
+            # elif "nodes" in self.cfg.dataset:
+            #     imreward_list_s = toy_rewards(molecule_list_s)
+            # imreward_list = imreward_list + imreward_list_s
 
         # self.ec_max = max(self.ec_max, max(ec_list))
         # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
@@ -2597,8 +2604,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         punish_max_value = max(punish_list)
         punish_list = (TB_MC / punish_max_value) * punish_list
         
-        imreward_max_value = max(imreward_list)
-        imreward_list = (IM_MC / imreward_max_value) * imreward_list
+        # imreward_max_value = max(imreward_list)
+        # imreward_list = (IM_MC / imreward_max_value) * imreward_list
 
         # Sample
         sampled_s = st
@@ -2838,6 +2845,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         punish_list = np.zeros(batch_size)
         ec_list = np.zeros(batch_size)
+        vc_list = np.zeros(batch_size)
         imreward_list = np.zeros(batch_size)
 
         for s_int in range(self.T - 1):
@@ -2845,8 +2853,10 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             # ec_s = torch.abs(E_traj[s_int] - E_traj[s_int + 1]).sum(dim=(-1, -2, -3)).numpy()
             # ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[-1]).sum( dim = (-1, -2) ).numpy()
             ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
+            vc_s = torch.abs(masked_X_traj[s_int] - masked_X_traj[s_int + 1]).sum( dim = (-1) ).numpy()
             ec_list = ec_list + ec_s
-            punish_s = [np.power(GAMMA_MC, ec) for ec in ec_s]
+            vc_list = vc_list + vc_s
+            punish_s = [np.power(GAMMA_MC, ec + vc) for ec, vc in zip(ec_s, vc_s)]
             punish_list = punish_list + punish_s
 
             molecule_list_s = []
@@ -2856,18 +2866,18 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 edge_types_s = masked_E_traj[s_int][i, :n, :n].cpu()
                 molecule_list_s.append([atom_types_s, edge_types_s])
             
-            if self.cfg.dataset.name == "toytree":
-                imreward_list_s = tree_rewards(molecule_list_s)
-            elif "nodes" in self.cfg.dataset:
-                imreward_list_s = toy_rewards(molecule_list_s)
-            imreward_list = imreward_list + imreward_list_s
+            # if self.cfg.dataset.name == "toytree":
+            #     imreward_list_s = tree_rewards(molecule_list_s)
+            # elif "nodes" in self.cfg.dataset:
+            #     imreward_list_s = toy_rewards(molecule_list_s)
+            # imreward_list = imreward_list + imreward_list_s
 
         # self.ec_max = max(self.ec_max, max(ec_list))
         # punish_list = [TB_MC * (1 - ec / self.ec_max) for ec in ec_list]
         punish_max_value = max(punish_list)
         punish_list = (TB_MC / punish_max_value) * punish_list
-        imreward_max_value = max(imreward_list)
-        imreward_list = (IM_MC / imreward_max_value) * imreward_list
+        # imreward_max_value = max(imreward_list)
+        # imreward_list = (IM_MC / imreward_max_value) * imreward_list
 
         # Compute reward
         s0 = st
@@ -2912,11 +2922,18 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             for idx,value in enumerate(freq_list):
                 if value>0 and reward_list[idx]!=-1:
                     reward_list[idx] = reward_list[idx]/value
+            
+            ### punish ###
+            for idx,value in enumerate(reward_list):
+                if value == 0 or value == -1:
+                    punish_list[idx] = 0
+
         elif self.cfg.dataset.name in ["planar","sbm"] and "nodes" not in self.cfg.dataset:
             if self.train_graphs is None:
                 self.train_graphs = loader_to_nx(self.trainer.datamodule.train_dataloader())
             reward_list = graph_rewards(molecule_list,self.train_graphs,self.cfg.dataset.name)
             validmean = np.array(reward_list).mean().item()
+            
         elif self.cfg.dataset.name == "toytree":
             reward_list = tree_rewards(molecule_list)
             validmean = np.array(reward_list + punish_list).mean().item() 
