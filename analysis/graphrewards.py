@@ -553,7 +553,7 @@ def gen_toy_reward_list(generated_graphs):
         networkx_graphs.append(nx_graph)
     score_list = []
     for nx_graph in networkx_graphs:
-        if nx.is_connected(nx_graph):
+        if nx.is_bipartite(nx_graph):
             score_list.append(1)
         else:
             score_list.append(0)

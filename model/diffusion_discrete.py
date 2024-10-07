@@ -41,7 +41,7 @@ from overrides import overrides
 from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
-TB_MC = 0.5
+TB_MC = 2.0
 PP_MC = 1.0
 
 
@@ -2581,22 +2581,36 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         n_nodes_cpu = [n.cpu() for n in n_nodes]
 
         for s_int in range(int(self.T * PP_MC)):
-
-            ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
+            ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
+            ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
             # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
-            vc_s = torch.abs(masked_X_traj[s_int] - masked_X_traj[s_int + 1]).sum( dim = (-1) ).numpy()
+            vc_s = masked_X_traj[s_int] - masked_X_traj[s_int + 1]
+            vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
             # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
 
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
+
+        ec0_list = (masked_E_traj[0] - masked_E_traj[self.T])
+        ec0_list =  torch.where(ec0_list != 0, torch.tensor(1), ec0_list).sum( dim = (-1, -2) ).numpy()
+        ec0_list[ec0_list == 0] = 1
+
+        vc0_list = (masked_X_traj[0] - masked_X_traj[self.T])
+        vc0_list =  torch.where(vc0_list != 0, torch.tensor(1), vc0_list).sum( dim = (-1) ).numpy()
+        vc0_list[vc0_list == 0] = 1
+
+        ec_list = ec_list / ec0_list
+        vc_list = vc_list / vc0_list
         
-        ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
-        vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
+        ec_list = np.array([np.power(GAMMA_MC, ec) for ec in ec_list])
+        vc_list = np.array([np.power(GAMMA_MC, vc) for vc in vc_list])
+        # ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
+        # vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
 
         ec_max = max(ec_list)
         vc_max = max(vc_list)        
 
-        punish_list = TB_MC * 0.5 * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
+        punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
 
         # Sample
         sampled_s = st
@@ -2847,23 +2861,38 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         n_nodes_cpu = [n.cpu() for n in n_nodes]
 
         for s_int in range(int(self.T * PP_MC)):
-
-            ec_s = torch.abs(masked_E_traj[s_int] - masked_E_traj[s_int + 1]).sum( dim = (-1, -2) ).numpy()
+            ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
+            ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
             # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
-            vc_s = torch.abs(masked_X_traj[s_int] - masked_X_traj[s_int + 1]).sum( dim = (-1) ).numpy()
+            vc_s = masked_X_traj[s_int] - masked_X_traj[s_int + 1]
+            vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
             # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
 
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
+
+        ec0_list = (masked_E_traj[0] - masked_E_traj[self.T])
+        ec0_list =  torch.where(ec0_list != 0, torch.tensor(1), ec0_list).sum( dim = (-1, -2) ).numpy()
+        ec0_list[ec0_list == 0] = 1
+
+        vc0_list = (masked_X_traj[0] - masked_X_traj[self.T])
+        vc0_list =  torch.where(vc0_list != 0, torch.tensor(1), vc0_list).sum( dim = (-1) ).numpy()
+        vc0_list[vc0_list == 0] = 1
+
+        ec_list = ec_list / ec0_list
+        vc_list = vc_list / vc0_list
         
-        ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
-        vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
+        ec_list = np.array([np.power(GAMMA_MC, ec) for ec in ec_list])
+        vc_list = np.array([np.power(GAMMA_MC, vc) for vc in vc_list])
+        # ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
+        # vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
 
         ec_max = max(ec_list)
         vc_max = max(vc_list)        
 
-        punish_list = TB_MC * 0.5 * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
+        punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
 
+        
 
         # Compute reward
         s0 = st
