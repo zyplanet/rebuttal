@@ -39,7 +39,7 @@ model:
     type: 'discrete'
     transition: 'marginal'                          # uniform or marginal
     model: 'graph_tf'
-    diffusion_steps: 500
+    diffusion_steps: 100
     diffusion_noise_schedule: 'cosine'              # 'cosine', 'polynomial_2'
     extra_features: 'all'                              # 'all', 'cycles', 'eigenvalues' or null
 
