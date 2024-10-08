@@ -541,6 +541,29 @@ def gen_reward_label(generated_graphs,dataname):
     score_list = np.array(acc).tolist()
     return score_list
 
+def is_single_chain(G):
+    # 检查节点数和边数
+    n = G.number_of_nodes()
+    m = G.number_of_edges()
+    if m != n - 1:
+        return False
+
+    # 检查图的连通性
+    if not nx.is_connected(G):
+        return False
+
+    # 检查节点的度数
+    degree_sequence = [d for n, d in G.degree()]
+    degree_sequence.sort()
+    
+    # 单链图的度数序列应该是 [1, 1, 2, 2, ..., 2, 2]
+    return degree_sequence == [1, 1] + [2] * (n - 2)
+
+def is_complete_graph(G):
+    n = G.number_of_nodes()
+    m = G.number_of_edges()
+    return m == n * (n - 1) // 2
+
 def gen_toy_reward_list(generated_graphs):
     networkx_graphs = []
     adjacency_matrices = []
@@ -553,10 +576,22 @@ def gen_toy_reward_list(generated_graphs):
         networkx_graphs.append(nx_graph)
     score_list = []
     for nx_graph in networkx_graphs:
-        if nx.is_bipartite(nx_graph):
+        if is_complete_graph(nx_graph):
             score_list.append(1)
         else:
             score_list.append(0)
+        
+        # degrees = [degree for node, degree in nx_graph.degree()]
+        # all_degrees_in_range = all(2 <= degree for degree in degrees)
+        # if all_degrees_in_range:
+        #     score_list.append(1)
+        # else:
+        #     score_list.append(0)
+
+        # if nx.is_bipartite(nx_graph):
+        #     score_list.append(1)
+        # else:
+        #     score_list.append(0)
     return np.array(score_list)
 
 
