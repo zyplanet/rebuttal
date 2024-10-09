@@ -1,6 +1,6 @@
 #!/bin/bash 
 
-train_method="gdpo"
+train_method="isddpo"
 val_method="ppo"
 lr=1e-5
 innerloop=1
