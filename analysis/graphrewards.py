@@ -12,9 +12,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 import networkx as nx
+import community as community_louvain
 import subprocess as sp
 import concurrent.futures
 
+import powerlaw
 import pygsp as pg
 import secrets
 from string import ascii_uppercase, digits
@@ -576,7 +578,47 @@ def gen_toy_reward_list(generated_graphs):
         networkx_graphs.append(nx_graph)
     score_list = []
     for nx_graph in networkx_graphs:
-        if nx.is_biconnected(nx_graph):
+        # score_list.append(nx_graph.number_of_edges() / (nx_graph.number_of_nodes() * (nx_graph.number_of_nodes() - 1) / 2))  # density
+        # score_list.append(nx.average_clustering(nx_graph)) # gcc
+    
+        # if len(nx_graph) > 1:
+        #     score_list.append(nx.global_efficiency(nx_graph))
+        # else:
+        #     global_efficiency = 1
+        
+            
+        
+        # degree_centralization = nx.closeness_centrality(nx_graph)
+        # max_degree_centrality = max(degree_centralization.values())
+        # if len(nx_graph) <= 1:
+        #     score_list.append(0)
+        # else:
+        #     degree_centralization_score = sum(max_degree_centrality - v for v in degree_centralization.values()) / ((len(nx_graph) - 1) * (len(nx_graph) - 1))
+        #     score_list.append(degree_centralization_score)
+        # score_list.append(nx.average_shortest_path_length(nx_graph))
+        # if len(nx_graph.edges()) == 0:
+        #     score_list.append(-1)
+        # else:
+        #     score_list.append(community_louvain.modularity(community_louvain.best_partition(nx_graph),nx_graph))
+        # if nx.is_tree(nx_graph):
+        #     score_list.append(1)
+        # else:
+        #     score_list.append(0)
+    return np.array(score_list)
+
+def gen_toy_reward_list_partial(generated_graphs):
+    networkx_graphs = []
+    adjacency_matrices = []
+    for graph in generated_graphs:
+        node_types, edge_types = graph
+        A = edge_types.bool().cpu().numpy()
+        adjacency_matrices.append(A)
+
+        nx_graph = nx.from_numpy_array(A)
+        networkx_graphs.append(nx_graph)
+    score_list = []
+    for nx_graph in networkx_graphs:
+        if nx.is_tree(nx_graph):
             score_list.append(1)
         else:
             score_list.append(0)

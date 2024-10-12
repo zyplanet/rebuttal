@@ -9,7 +9,9 @@ from scorer.evaluate import evaluatelist as prop_df
 from analysis.graphrewards import gen_reward_label as graph_labels
 from analysis.graphrewards import gen_reward_list as graph_rewards
 from analysis.graphrewards import gen_toy_reward_list as toy_rewards
+from analysis.graphrewards import gen_toy_reward_list_partial as toy_rewards_partial
 from analysis.graphrewards import gen_tree_reward_list as tree_rewards
+
 from analysis.graphrewards import loader_to_nx
 from diffusion import diffusion_utils
 from diffusion.noise_schedule import DiscreteUniformTransition, PredefinedNoiseScheduleDiscrete,\
@@ -42,7 +44,7 @@ from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
 TB_MC = 0.5
-PP_MC = 1.0
+PP_MC = 0.0
 
 
 def to_sparse_batch(x, adj, mask=None):
@@ -1520,10 +1522,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                 self.validation_time += 1
             elif "nodes" in self.cfg.dataset:
                 res = toy_rewards(samples)
-                logfile = self.home_prefix+"evaluation_toy_n{}_tb{}_{}.log".format(self.cfg.dataset.nodes,TB_MC,self.cfg.general.train_method)
+                tree_res = toy_rewards_partial(samples)
+                logfile = self.home_prefix+"evaluation_toy_n{}_tb{}_pp{}_{}.log".format(self.cfg.dataset.nodes,TB_MC,PP_MC,self.cfg.general.train_method)
                 avgreward = np.array(res).mean()
                 avgpunish = np.array(punishes).mean()
                 avgimreward = np.array(imrewards).mean()
+                avgtreereward = np.array(tree_res).mean()
                 logf = open(logfile,"a+")
                 avgscore = round(100*np.array(res).sum()/len(res),4)
                 write_dict = {
@@ -1541,7 +1545,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
                     "innerloop":self.cfg.general.innerloop,
                     "avgpunish":round(avgpunish,6),
                     "avgimreward":round(avgimreward,6),
-                    "avgreward":round(avgreward,6)
+                    "avgreward":round(avgreward,6),
+                    "avgtreereward":round(avgtreereward,6)
                 }
                 print(write_dict)
                 self.log("val/epoch_score",avgscore)
@@ -2584,7 +2589,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         n_nodes_cpu = [n.cpu() for n in n_nodes]
 
-        for s_int in range(int(self.T * PP_MC)):
+        for s_int in range(int(self.T * PP_MC), self.T):
             ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
             ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
             # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
@@ -2599,15 +2604,15 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
 
-            molecule_list = []
-            for i in range(batch_size):
-                n = n_nodes[i]
-                atom_types = masked_X_traj[s_int][i, :n].cpu()
-                edge_types = masked_E_traj[s_int][i, :n, :n].cpu()
-                molecule_list.append([atom_types, edge_types])
+            # molecule_list = []
+            # for i in range(batch_size):
+            #     n = n_nodes[i]
+            #     atom_types = masked_X_traj[s_int][i, :n].cpu()
+            #     edge_types = masked_E_traj[s_int][i, :n, :n].cpu()
+            #     molecule_list.append([atom_types, edge_types])
 
-            ir_s = toy_rewards(molecule_list)
-            ir_list = ir_list + ir_s
+            # ir_s = toy_rewards(molecule_list)
+            # ir_list = ir_list + ir_s
 
         # ec0_list = (masked_E_traj[0] - masked_E_traj[self.T])
         # ec0_list =  torch.where(ec0_list != 0, torch.tensor(1), ec0_list).sum( dim = (-1, -2) ).numpy()
@@ -2632,8 +2637,8 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         punish_list = TB_MC * ((1./ ec_max ) * ec_list)
 
-        ir_max = max(ir_list)
-        ir_list = ((1. / ir_max) * ir_list)
+        # ir_max = max(ir_list)
+        # ir_list = ((1. / ir_max) * ir_list)
         
         # Sample
         sampled_s = st
@@ -2881,9 +2886,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         ec_list = np.zeros(batch_size)
         vc_list = np.zeros(batch_size)
 
+        ir_list = np.zeros(batch_size)
+
         n_nodes_cpu = [n.cpu() for n in n_nodes]
 
-        for s_int in range(int(self.T * PP_MC)):
+        for s_int in range(int(self.T * PP_MC), self.T):
             ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
             ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
             # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
@@ -2892,11 +2899,21 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
             # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
 
-            # ec_s = np.array([np.power(GAMMA_MC, ec) for ec in ec_s])
-            # vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
+            ec_s = np.array([np.power(GAMMA_MC, ec) for ec in ec_s])
+            vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
 
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
+
+            # molecule_list = []
+            # for i in range(batch_size):
+            #     n = n_nodes[i]
+            #     atom_types = masked_X_traj[s_int][i, :n].cpu()
+            #     edge_types = masked_E_traj[s_int][i, :n, :n].cpu()
+            #     molecule_list.append([atom_types, edge_types])
+
+            # ir_s = toy_rewards(molecule_list)
+            # ir_list = ir_list + ir_s
 
         # ec0_list = (masked_E_traj[0] - masked_E_traj[self.T])
         # ec0_list =  torch.where(ec0_list != 0, torch.tensor(1), ec0_list).sum( dim = (-1, -2) ).numpy()
@@ -2909,17 +2926,20 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # ec_list = ec_list / ec0_list
         # vc_list = vc_list / vc0_list
         
-        ec_list = np.array([np.power(GAMMA_MC, ec) for ec in ec_list])
-        vc_list = np.array([np.power(GAMMA_MC, vc) for vc in vc_list])
+        # ec_list = np.array([np.power(GAMMA_MC, ec) for ec in ec_list])
+        # vc_list = np.array([np.power(GAMMA_MC, vc) for vc in vc_list])
         # ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
         # vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
 
-        ec_max = max(ec_list)
-        vc_max = max(vc_list)
+        
 
         # punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
-
+        ec_max = max(ec_list)
+        vc_max = max(vc_list)
         punish_list = TB_MC * ((1./ ec_max ) * ec_list)
+
+        # ir_max = max(ir_list)
+        # ir_list = ((1. / ir_max) * ir_list)
 
         # Compute reward
         s0 = st
@@ -2982,12 +3002,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             validmean = np.array(reward_list + punish_list).mean().item() 
         elif "nodes" in self.cfg.dataset:
             reward_list = toy_rewards(molecule_list)
-
-            validmean = np.array(punish_list * reward_list).mean().item()
+            validmean = np.array(punish_list + reward_list).mean().item()
         else:
             print("unexpected datset option")
 
-        advantages = torch.Tensor(reward_list * punish_list)
+        advantages = torch.Tensor(reward_list + punish_list)
         self.model.train()
         return torch.stack(X_traj),torch.stack(E_traj),node_mask,advantages,validmean
 

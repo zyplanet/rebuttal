@@ -1,14 +1,14 @@
 #!/bin/bash 
 
-train_method="isddpo"
+train_method="ddpo"
 val_method="ppo"
-lr=1e-5
+lr=1e-4
 innerloop=1
 sampleloop=1
 step_freq=1
 fix=0.
-nodes=4
-device=0
+nodes=32
+device=1
 # for run_times in `seq 1 1`:
 # do
 #     python main_generate.py -m general.test_method=$method general.seed=$RANDOM
