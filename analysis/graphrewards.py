@@ -15,7 +15,7 @@ import networkx as nx
 import community as community_louvain
 import subprocess as sp
 import concurrent.futures
-
+from collections import Counter
 import powerlaw
 import pygsp as pg
 import secrets
@@ -566,41 +566,146 @@ def is_complete_graph(G):
     m = G.number_of_edges()
     return m == n * (n - 1) // 2
 
+def calculate_class_entropy(node_types):
+
+    filtered_node_types = [node.item() for node in node_types if node.item() != -1]
+    
+    class_counts = Counter(filtered_node_types)
+    print("class_counts:",class_counts)
+    total_nodes = len(node_types)
+    class_frequencies = [count / total_nodes for count in class_counts.values()]
+    print("class_frequencies:",class_frequencies)
+    # 计算类别熵
+    class_entropy = -sum(freq * np.log2(freq  + 1e-10 ) for freq in class_frequencies)# 加一个小值防止 log(0)
+
+    return class_entropy
+
+def calculate_intra_class_edge_proportion(nx_graph):
+    node_types = nx.get_node_attributes(nx_graph, 'type')
+    intra_class_edges = 0
+    total_edges = nx_graph.number_of_edges()
+    
+    for u, v in nx_graph.edges():
+        if node_types[u] == node_types[v]:
+            intra_class_edges += 1
+    
+    intra_class_edge_proportion = intra_class_edges / total_edges if total_edges > 0 else 0
+    return intra_class_edge_proportion
+
+def calculate_class_density(nx_graph):
+    node_types = nx.get_node_attributes(nx_graph, 'type')
+    type_nodes = {}
+    
+    for node, node_type in node_types.items():
+        if node_type not in type_nodes:
+            type_nodes[node_type] = []
+        type_nodes[node_type].append(node)
+    
+    class_densities = []
+    
+    for node_type, nodes in type_nodes.items():
+        subgraph = nx_graph.subgraph(nodes)
+        num_nodes = len(nodes)
+        num_edges = subgraph.number_of_edges()
+        max_possible_edges = num_nodes * (num_nodes - 1) / 2
+        class_density = num_edges / max_possible_edges if max_possible_edges > 0 else 1
+        class_densities.append(class_density)
+
+    return class_densities
+
+def calculate_average_class_density(nx_graph):
+    class_densities = calculate_class_density(nx_graph)
+    average_class_density = np.mean(class_densities)
+    return average_class_density
+
+def calculate_intra_class_network_efficiency(nx_graph):
+    node_types = nx.get_node_attributes(nx_graph, 'type')
+    type_nodes = {}
+    
+    for node, node_type in node_types.items():
+        if node_type not in type_nodes:
+            type_nodes[node_type] = []
+        type_nodes[node_type].append(node)
+    
+    intra_class_efficiencies = []
+    
+    for node_type, nodes in type_nodes.items():
+        subgraph = nx_graph.subgraph(nodes)
+        intra_class_efficiency = nx.global_efficiency(subgraph)
+        intra_class_efficiencies.append(intra_class_efficiency)
+    
+    return np.mean(intra_class_efficiencies)
+
+def calculate_average_intra_class_clustering_coefficient(nx_graph):
+    node_types = nx.get_node_attributes(nx_graph, 'type')
+    type_nodes = {}
+    
+    for node, node_type in node_types.items():
+        if node_type not in type_nodes:
+            type_nodes[node_type] = []
+        type_nodes[node_type].append(node)
+    
+    intra_class_clustering_coefficients = []
+    
+    for node_type, nodes in type_nodes.items():
+        clustering_coefficients = nx.clustering(nx_graph, nodes)
+        average_clustering_coefficient = np.mean(list(clustering_coefficients.values()))
+        intra_class_clustering_coefficients.append(average_clustering_coefficient)
+    
+    average_intra_class_clustering_coefficient = np.mean(intra_class_clustering_coefficients)
+    return average_intra_class_clustering_coefficient
+
+
 def gen_toy_reward_list(generated_graphs):
     networkx_graphs = []
     adjacency_matrices = []
+    score_list = []
     for graph in generated_graphs:
         node_types, edge_types = graph
+        
         A = edge_types.bool().cpu().numpy()
         adjacency_matrices.append(A)
 
         nx_graph = nx.from_numpy_array(A)
+
+        for node, node_type in enumerate(node_types):
+            if node_type != -1:  # 过滤掉不存在的节点
+                nx_graph.nodes[node]['type'] = node_type.item()
+        
         networkx_graphs.append(nx_graph)
-    score_list = []
+        
     for nx_graph in networkx_graphs:
-        # score_list.append(nx_graph.number_of_edges() / (nx_graph.number_of_nodes() * (nx_graph.number_of_nodes() - 1) / 2))  # density
-        # score_list.append(nx.average_clustering(nx_graph)) # gcc
+        
+    #     # score_list.append(nx_graph.number_of_edges() / (nx_graph.number_of_nodes() * (nx_graph.number_of_nodes() - 1) / 2))  # density
+        score_list.append(nx.average_clustering(nx_graph)) # gcc
     
         # if len(nx_graph) > 1:
         #     score_list.append(nx.global_efficiency(nx_graph))
         # else:
         #     global_efficiency = 1
         
-            
+    #     # if nx.is_connected(nx_graph):
+    #     #     score_list.append(1)
+    #     # else:
+    #     #     score_list.append(0)
+
+        # assortativity_coefficient = nx.attribute_assortativity_coefficient(nx_graph, 'type')
+        # score_list.append(-assortativity_coefficient)
+        # intra_class_edge_proportion = calculate_intra_class_edge_proportion(nx_graph)
+        # score_list.append(intra_class_edge_proportion)
+
+        #平均类别密度
+        # average_class_density = calculate_average_class_density(nx_graph)
         
-        # degree_centralization = nx.closeness_centrality(nx_graph)
-        # max_degree_centrality = max(degree_centralization.values())
-        # if len(nx_graph) <= 1:
-        #     score_list.append(0)
-        # else:
-        #     degree_centralization_score = sum(max_degree_centrality - v for v in degree_centralization.values()) / ((len(nx_graph) - 1) * (len(nx_graph) - 1))
-        #     score_list.append(degree_centralization_score)
-        # score_list.append(nx.average_shortest_path_length(nx_graph))
-        # if len(nx_graph.edges()) == 0:
-        #     score_list.append(-1)
-        # else:
-        #     score_list.append(community_louvain.modularity(community_louvain.best_partition(nx_graph),nx_graph))
-        # if nx.is_tree(nx_graph):
+        # score_list.append(average_class_density)
+        
+        # # 平均类内聚类系数
+        # score_list.append(calculate_average_intra_class_clustering_coefficient(nx_graph))
+
+        # 平均类型内效率 choose
+        # score_list.append(calculate_intra_class_network_efficiency(nx_graph))
+
+        # if nx.is_connected(nx_graph):
         #     score_list.append(1)
         # else:
         #     score_list.append(0)

@@ -464,6 +464,7 @@ class GraphTransformer(nn.Module):
         torch.cuda.manual_seed(28211)
         np.random.seed(28211)
         random.seed(28211)
+
         self.mlp_in_X = nn.Sequential(nn.Linear(input_dims['X'], hidden_mlp_dims['X']), act_fn_in,
                                       nn.Linear(hidden_mlp_dims['X'], hidden_dims['dx']), act_fn_in)
 

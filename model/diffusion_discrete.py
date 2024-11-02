@@ -44,7 +44,7 @@ from pytorch_lightning.utilities import rank_zero_only
 
 GAMMA_MC = 0.5
 TB_MC = 0.5
-PP_MC = 0.0
+PP_MC = 0.5
 
 
 def to_sparse_batch(x, adj, mask=None):
@@ -142,6 +142,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         self.visualization_tools = visualization_tools
         self.extra_features = extra_features
         self.domain_features = domain_features
+
         self.model = GraphTransformer(n_layers=cfg.model.n_layers,
                                       input_dims=input_dims,
                                       hidden_mlp_dims=cfg.model.hidden_mlp_dims,
@@ -2447,6 +2448,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         E = torch.cat((noisy_data['E_t'], extra_data.E), dim=3).float()
         y = torch.hstack((noisy_data['y_t'], extra_data.y)).float()
         # print("forward shae",X.shape,E.shape,y.shape)
+
         return self.model(X, E, y, node_mask)
     
     @torch.no_grad()
@@ -2480,6 +2482,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         z_T = diffusion_utils.sample_discrete_feature_noise(
             limit_dist=self.limit_dist, node_mask=node_mask)
         X, E, y = z_T.X, z_T.E, z_T.y
+        
         assert (E == torch.transpose(E, 1, 2)).all()
         assert number_chain_steps < self.T
         x, edge_index, edge_weight, batch = compress(X.cpu(),E.cpu(),node_mask.cpu())
@@ -2550,6 +2553,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         z_T = diffusion_utils.sample_discrete_feature_noise(
             limit_dist=self.limit_dist, node_mask=node_mask)
         X, E, y = z_T.X, z_T.E, z_T.y
+
         X_traj.append(X.cpu())
         E_traj.append(E.cpu())
 
@@ -2589,17 +2593,67 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         n_nodes_cpu = [n.cpu() for n in n_nodes]
 
-        for s_int in range(int(self.T * PP_MC), self.T):
-            ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
-            ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
-            # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
-            vc_s = masked_X_traj[s_int] - masked_X_traj[s_int + 1]
+        # if self.validation_time == 0 or self.validation_time == 90:
+        #     # Sample
+        #     sampled_s = st
+        #     X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
 
+        #     # Prepare the chain for saving
+
+        #     molecule_list = []
+        #     for i in range(batch_size):
+        #         n = n_nodes[i]
+        #         atom_types = X[i, :n].cpu()
+        #         edge_types = E[i, :n, :n].cpu()
+        #         molecule_list.append([atom_types, edge_types])
+        #     reward_list_current = toy_rewards(molecule_list)
+        #     graph_save = {
+        #         'masked_E_traj': masked_E_traj[-1].tolist(),
+        #         'masked_X_traj': masked_X_traj[-1].tolist()
+        #     }
+        #     with open(self.home_prefix + 'graph' + str(self.validation_time) + '.json', 'w') as f:
+        #         json.dump(graph_save, f)
+        #     ec_save = []
+        #     vc_save = []
+        #     for s_int in range(int(self.T * PP_MC), self.T):
+        #         ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
+        #         ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
+        #         # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
+        #         vc_s = masked_X_traj[s_int] - masked_X_traj[s_int + 1]
+        #         vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
+        #         ec_save.append(np.mean(ec_s))
+        #         vc_save.append(np.mean(vc_s))
+        #     print("epoch:",self.validation_time,"ec:",ec_save)
+        #     print("epoch:",self.validation_time,"vc:",vc_save)
+        #     import pdb
+        #     pdb.set_trace()
+
+        for s_int in range(int(self.T * PP_MC), self.T):
+
+            ec_s = masked_E_traj[s_int] - masked_E_traj[s_int+1]
+
+            ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
+
+            # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
+            vc_s = masked_X_traj[s_int] - masked_X_traj[s_int+1]
             vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
             # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
 
+            # 凹
             ec_s = np.array([np.power(GAMMA_MC, ec) for ec in ec_s])
             vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
+
+            # # cdivx
+            # ec_s = np.array([1/(ec+1) for ec in ec_s])
+            # vc_s = np.array([1/(vc+1) for vc in vc_s])
+
+            # # cdivx2
+            # ec_s = np.array([1/(ec+1e-10) for ec in ec_s])
+            # vc_s = np.array([1/(vc+1e-10) for vc in vc_s])
+
+            # # 线性
+            # ec_s = np.array([1 - ec / 128 for ec,n in zip(ec_s,n_nodes_cpu)])
+            # vc_s = np.array([1 - vc / 128 for vc,n in zip(vc_s,n_nodes_cpu)])
 
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
@@ -2634,7 +2688,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         vc_max = max(vc_list)
 
         # punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
-
+        # punish_list = TB_MC * ((1./ vc_max ) * ec_list)
         punish_list = TB_MC * ((1./ ec_max ) * ec_list)
 
         # ir_max = max(ir_list)
@@ -2899,8 +2953,25 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
             # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
 
+            # c^x
             ec_s = np.array([np.power(GAMMA_MC, ec) for ec in ec_s])
             vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
+
+            # # cdivx
+            # ec_s = np.array([1/(ec+1e-10) for ec in ec_s])
+            # vc_s = np.array([1/(vc+1e-10) for vc in vc_s])
+
+            # # cdivx2
+            # ec_s = np.array([1/(ec**2+1e-10) for ec in ec_s])
+            # vc_s = np.array([1/(vc**2+1e-10) for vc in vc_s])
+
+            # x^c
+            # ec_s = np.array(-x for ec in ec_s])
+            # vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
+            
+            # # 线性
+            # ec_s = np.array([1 - ec / 128 for ec,n in zip(ec_s,n_nodes_cpu)])
+            # vc_s = np.array([1 - vc / 128 for vc,n in zip(vc_s,n_nodes_cpu)])
 
             ec_list = ec_list + ec_s
             vc_list = vc_list + vc_s
@@ -2930,14 +3001,14 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         # vc_list = np.array([np.power(GAMMA_MC, vc) for vc in vc_list])
         # ec_list = np.array([np.power(GAMMA_MC, ec / n**2) for ec,n in zip(ec_list,n_nodes_cpu)])
         # vc_list = np.array([np.power(GAMMA_MC, vc / n) for vc,n in zip(vc_list,n_nodes_cpu)])
-
         
-
-        # punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
         ec_max = max(ec_list)
         vc_max = max(vc_list)
-        punish_list = TB_MC * ((1./ ec_max ) * ec_list)
 
+        # punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
+        punish_list = TB_MC * ((1./ ec_max ) * ec_list)
+        
+        # punish_list = TB_MC * ((1./ vc_max ) * ec_list)
         # ir_max = max(ir_list)
         # ir_list = ((1. / ir_max) * ir_list)
 
@@ -3012,6 +3083,107 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
     @torch.no_grad()
     def sample_batch_isppo(self, batch_size: int):
+        # """
+        # :param batch_id: int
+        # :param batch_size: int
+        # :param num_nodes: int, <int>tensor (batch_size) (optional) for specifying number of nodes
+        # :param save_final: int: number of predictions to save to file
+        # :param keep_chain: int: number of chains to save to file
+        # :param keep_chain_steps: number of timesteps to save for each chain
+        # :return: molecule_list. Each element of this list is a tuple (atom_types, charges, positions)
+        # """
+        # self.model.eval()
+        # n_nodes = self.node_dist.sample_n(batch_size, self.device)
+        # n_max = torch.max(n_nodes).item()
+        # # Build the masks
+        # arange = torch.arange(n_max, device=self.device).unsqueeze(
+        #     0).expand(batch_size, -1)
+        # node_mask = arange < n_nodes.unsqueeze(1)
+        # X_traj = []
+        # Xlogp_traj = []
+        # E_traj = []
+        # Elogp_traj = []
+        # # TODO: how to move node_mask on the right device in the multi-gpu case?
+        # # TODO: everything else depends on its device
+        # # Sample noise  -- z has size (n_samples, n_nodes, n_features)
+        # z_T = diffusion_utils.sample_discrete_feature_noise(
+        #     limit_dist=self.limit_dist, node_mask=node_mask)
+        # X, E, y = z_T.X, z_T.E, z_T.y
+        # assert (E == torch.transpose(E, 1, 2)).all()
+        # X_traj.append(X.cpu())
+        # E_traj.append(E.cpu())
+        # # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        # for s_int in reversed(range(0, self.T)):
+        #     s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
+        #     t_array = s_array + 1
+        #     s_norm = s_array / self.T
+        #     t_norm = t_array / self.T
+
+        #     # Sample z_s
+        #     sampled_s, logP = self.sample_p_zs_given_zt_ppo(
+        #         s_norm, t_norm, X, E, y, node_mask)
+        #     X, E, y = sampled_s.X, sampled_s.E, sampled_s.y
+        #     X_traj.append(X.cpu())
+        #     E_traj.append(E.cpu())
+        #     Xlogp_traj.append(logP[0].cpu())
+        #     Elogp_traj.append(logP[1].cpu())
+        # #compute reward
+        # s0 = sampled_s.mask(node_mask, collapse=True)
+        # X, E, y = s0.X, s0.E, s0.y
+        # molecule_list = []
+        # for i in range(batch_size):
+        #     n = n_nodes[i]
+        #     atom_types = X[i, :n].cpu()
+        #     edge_types = E[i, :n, :n].cpu()
+        #     molecule_list.append([atom_types, edge_types])
+        # if "ogbg" in self.cfg.dataset.name:
+        #     valid_list,uniq,freq_list,reward_list = compute_molecular_metrics_list(molecule_list,self.dataset_info)
+        #     for idx,freq in enumerate(freq_list):
+        #         if freq>0:
+        #             reward_list[idx] = reward_list[idx]/freq
+        #     validmean = np.array(valid_list).mean().item()
+        # elif self.cfg.dataset.name in ["zinc","moses"]:
+        #     if self.train_fps is None:
+        #         assert self.train_smiles is not None
+        #         train_mols = [Chem.MolFromSmiles(smi) for smi in self.train_smiles]
+        #         self.train_fps = [AllChem.GetMorganFingerprintAsBitVect((mol), 2, 1024) for mol in train_mols]
+        #     smiles,valid_r,uniq,uniq_r,freq_list = gen_smile_list(molecule_list,self.dataset_info)
+        #     valid_idx = [x for x in range(len(smiles))if smiles[x] is not None]
+        #     valid_list = [x for x in smiles if x is not None]
+        #     if len(valid_list)>0:
+        #         if self.cfg.general.discrete:
+        #             if self.cfg.dataset.name == "moses":
+        #                 valid_score_list = gen_score_disc_listmose(self.cfg.general.target_prop,valid_list,self.cfg.general.thres,self.train_fps)
+        #             else:
+        #                 valid_score_list = gen_score_disc_list(self.cfg.general.target_prop,valid_list,self.cfg.general.thres,self.train_fps,self.cfg.general.weight_list)
+        #         else:
+        #             valid_score_list = gen_score_list(self.cfg.general.target_prop,valid_list,self.train_fps)
+        #     else:
+        #         valid_score_list = []
+        #     reward_list = [0]*len(smiles)
+        #     # print("valid score list",valid_score_list)
+        #     for idx,score in enumerate(valid_score_list):
+        #         reward_list[valid_idx[idx]]=score
+        #     reward_list = np.array(reward_list)
+        #     validmean = (reward_list[reward_list!=-1]).mean().item()
+        #     reward_list = reward_list.tolist()
+        #     for idx,value in enumerate(freq_list):
+        #         if value>0 and reward_list[idx]!=-1:
+        #             reward_list[idx] = reward_list[idx]/value
+        # elif self.cfg.dataset.name in ["planar","sbm"] and "nodes" not in self.cfg.dataset:
+        #     if self.train_graphs is None:
+        #         self.train_graphs = loader_to_nx(self.trainer.datamodule.train_dataloader())
+        #     reward_list = graph_rewards(molecule_list,self.train_graphs,self.cfg.dataset.name)
+        #     validmean = np.array(reward_list).mean().item()
+        # elif "nodes" in self.cfg.dataset:
+        #     reward_list = toy_rewards(molecule_list)
+        #     validmean = np.array(reward_list).mean().item()    
+        # else:
+        #     print("unexpected datset option")
+        # advantages = torch.Tensor(reward_list)
+        # self.model.train()
+        # return torch.stack(X_traj),torch.stack(E_traj),torch.stack(Xlogp_traj),torch.stack(Elogp_traj),node_mask,advantages,validmean
+
         """
         :param batch_id: int
         :param batch_size: int
@@ -3032,6 +3204,9 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         Xlogp_traj = []
         E_traj = []
         Elogp_traj = []
+
+        masked_E_traj = []
+        masked_X_traj = []
         # TODO: how to move node_mask on the right device in the multi-gpu case?
         # TODO: everything else depends on its device
         # Sample noise  -- z has size (n_samples, n_nodes, n_features)
@@ -3041,6 +3216,12 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
         assert (E == torch.transpose(E, 1, 2)).all()
         X_traj.append(X.cpu())
         E_traj.append(E.cpu())
+
+        st = utils.PlaceHolder(X, E, y).mask(node_mask, collapse=True)
+        masked_X, masked_E, masked_y = st.X, st.E, st.y
+
+        masked_E_traj.append(masked_E.cpu())
+        masked_X_traj.append(masked_X.cpu())
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
         for s_int in reversed(range(0, self.T)):
             s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
@@ -3056,8 +3237,44 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             E_traj.append(E.cpu())
             Xlogp_traj.append(logP[0].cpu())
             Elogp_traj.append(logP[1].cpu())
+
+            st = sampled_s.mask(node_mask, collapse=True)
+            masked_X, masked_E, masked_y = st.X, st.E, st.y
+
+            masked_E_traj.append(masked_E.cpu())
+            masked_X_traj.append(masked_X.cpu())
+
+        # Compute punish
+
+        ec_list = np.zeros(batch_size)
+        vc_list = np.zeros(batch_size)
+
+        ir_list = np.zeros(batch_size)
+
+        n_nodes_cpu = [n.cpu() for n in n_nodes]
+
+        for s_int in range(int(self.T * PP_MC), self.T):
+            ec_s = masked_E_traj[s_int] - masked_E_traj[s_int + 1]
+            ec_s = torch.where(ec_s != 0, torch.tensor(1), ec_s).sum( dim = (-1, -2) ).numpy()
+            # ec_s = np.array([1 - ec / n**2 for ec,n in zip(ec_s, n_nodes_cpu)])
+            vc_s = masked_X_traj[s_int] - masked_X_traj[s_int + 1]
+
+            vc_s = torch.where(vc_s != 0, torch.tensor(1), vc_s).sum( dim = (-1) ).numpy()
+            # vc_s = np.array([1 - vc / n for vc,n in zip(vc_s, n_nodes_cpu)])
+
+            # c^x
+            ec_s = np.array([np.power(GAMMA_MC, ec) for ec in ec_s])
+            vc_s = np.array([np.power(GAMMA_MC, vc) for vc in vc_s])
+        
+            ec_list = ec_list + ec_s
+            vc_list = vc_list + vc_s
+
+        ec_max = max(ec_list)
+        vc_max = max(vc_list)
+
+        punish_list = TB_MC * ( (1. / vc_max ) * vc_list  + self.lambda_train[0] * (1./ ec_max ) * ec_list) / (1 + self.lambda_train[0])
         #compute reward
-        s0 = sampled_s.mask(node_mask, collapse=True)
+        s0 = st
         X, E, y = s0.X, s0.E, s0.y
         molecule_list = []
         for i in range(batch_size):
@@ -3105,11 +3322,11 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
             reward_list = graph_rewards(molecule_list,self.train_graphs,self.cfg.dataset.name)
             validmean = np.array(reward_list).mean().item()
         elif "nodes" in self.cfg.dataset:
-            reward_list = toy_rewards(molecule_list)
-            validmean = np.array(reward_list).mean().item()    
+            reward_list = tree_rewards(molecule_list)
+            validmean = np.array(reward_list + punish_list).mean().item() 
         else:
             print("unexpected datset option")
-        advantages = torch.Tensor(reward_list)
+        advantages = torch.Tensor(reward_list + punish_list)
         self.model.train()
         return torch.stack(X_traj),torch.stack(E_traj),torch.stack(Xlogp_traj),torch.stack(Elogp_traj),node_mask,advantages,validmean
     
@@ -3250,6 +3467,7 @@ class DiscreteDenoisingDiffusion(pl.LightningModule):
 
         extra_data = self.compute_extra_data(noisy_data)
         # print("saample y shape is", y_t.shape,extra_data.y.shape)
+
         pred = self.forward(noisy_data, extra_data, node_mask)
 
         # Normalize predictions

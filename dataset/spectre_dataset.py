@@ -8,6 +8,7 @@ from torch_geometric.data import InMemoryDataset, download_url
 
 from dataset.abstract_dataset1 import AbstractDataModule, AbstractDatasetInfos
 
+import utils
 
 class SpectreGraphDataset(InMemoryDataset):
     def __init__(self, dataset_name, split, root, transform=None, pre_transform=None, pre_filter=None):
@@ -82,7 +83,9 @@ class SpectreGraphDataset(InMemoryDataset):
         data_list = []
         for adj in raw_dataset:
             n = adj.shape[-1]
-            X = torch.ones(n, 1, dtype=torch.float)
+            node_types = torch.randint(0, 1, (n,))
+            X = torch.zeros(n, 1, dtype=torch.float)
+            X[torch.arange(n), node_types] = 1
             y = torch.zeros([1, 0]).float()
             edge_index, _ = torch_geometric.utils.dense_to_sparse(adj)
             edge_attr = torch.zeros(edge_index.shape[-1], 2, dtype=torch.float)
@@ -239,7 +242,7 @@ class SpectreDatasetInfos(AbstractDatasetInfos):
         self.datamodule = datamodule
         self.name = 'nx_graphs'
         self.n_nodes = self.datamodule.node_counts()
-        self.node_types = torch.tensor([1])               # There are no node types
+        self.node_types = torch.tensor([1])             # There are no node types
         self.edge_types = self.datamodule.edge_counts()
         super().complete_infos(self.n_nodes, self.node_types)
 
@@ -252,5 +255,28 @@ class ToyDatasetInfos(AbstractDatasetInfos):
         self.n_nodes[0] = 0
         self.n_nodes[1] = 0
         self.node_types = torch.tensor([1])               # There are no node types
-        self.edge_types = torch.tensor([0.5,0.5])
+        self.edge_types = torch.tensor([0.5, 0.5])
         super().complete_infos(self.n_nodes, self.node_types)
+
+    def compute_input_output_dims(self, datamodule, extra_features, domain_features):
+        example_batch = next(iter(datamodule.train_dataloader()))
+        ex_dense, node_mask = utils.to_dense(example_batch.x, example_batch.edge_index, example_batch.edge_attr,
+                                             example_batch.batch)
+        example_data = {'X_t': ex_dense.X, 'E_t': ex_dense.E, 'y_t': example_batch['y'], 'node_mask': node_mask}
+        
+        self.input_dims = {'X': 1,
+                           'E': example_batch['edge_attr'].size(1),
+                           'y': example_batch['y'].size(1) + 1}      # + 1 due to time conditioning
+        ex_extra_feat = extra_features(example_data)
+        self.input_dims['X'] += ex_extra_feat.X.size(-1)
+        self.input_dims['E'] += ex_extra_feat.E.size(-1)
+        self.input_dims['y'] += ex_extra_feat.y.size(-1)
+
+        ex_extra_molecular_feat = domain_features(example_data)
+        self.input_dims['X'] += ex_extra_molecular_feat.X.size(-1)
+        self.input_dims['E'] += ex_extra_molecular_feat.E.size(-1)
+        self.input_dims['y'] += ex_extra_molecular_feat.y.size(-1)
+
+        self.output_dims = {'X': 1,
+                            'E': example_batch['edge_attr'].size(1),
+                            'y': 0}
